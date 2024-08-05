@@ -3,6 +3,11 @@ use crate::value::{Value, ValueArray};
 #[derive(FromPrimitive)]
 pub enum OpCode {
     OP_CONSTANT,
+    OP_ADD,
+    OP_SUBTRACT,
+    OP_MULTIPLY,
+    OP_DIVIDE,
+    OP_NEGATE,
     OP_RETURN,
 }
 
@@ -26,9 +31,18 @@ impl Chunk {
         self.lines.push(line);
     }
 
+    pub fn get_instr(&self, index: usize) -> Option<&u8>{
+        self.code.get(index)
+    }
+
     pub fn add_constant(&mut self, new_val: Value) ->usize{
         self.value_array.write_value(new_val);
         return self.value_array.get_count()-1; // returns position of start of opcode (hopefully).
+    }
+
+    pub fn get_constant(&self, index: usize) -> Option<&Value>{
+        self.value_array.get_value(index)
+
     }
 
 
@@ -36,7 +50,7 @@ impl Chunk {
         self.code.len()
     }
 
-  fn disassemble_instruction(&self, offset: usize) -> Result<usize, String>{
+  pub fn disassemble_instruction(&self, offset: usize) -> Result<usize, String>{
     print!("{}",format!("{:04}",offset));
     let found_opcode = self.code.get(offset);
     match found_opcode { // check if offset is out of bounds
@@ -51,7 +65,12 @@ impl Chunk {
                 Some(instr) => {
                     let new_offset = match instr{ // dispatch to different output based on instr
                         OpCode::OP_RETURN => self.simple_instruction("OP_RETURN".to_string(), offset)?,
+                        OpCode::OP_NEGATE => self.simple_instruction("OP_NEGATE".to_string(), offset)?,
                         OpCode::OP_CONSTANT => self.constant_instruction("OP_CONSTANT".to_string(), offset)?,
+                        OpCode::OP_ADD => self.simple_instruction("OP_ADD".to_string(), offset)?,
+                        OpCode::OP_SUBTRACT => self.simple_instruction("OP_SUBTRACT".to_string(), offset)?,
+                        OpCode::OP_MULTIPLY => self.simple_instruction("OP_MULTIPLY".to_string(), offset)?,
+                        OpCode::OP_DIVIDE => self.simple_instruction("OP_DIVIDE".to_string(), offset)?,
                     };
                     return Ok(new_offset);
                 },

@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct Value {
    pub val: f64,
 }
