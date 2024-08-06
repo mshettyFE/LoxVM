@@ -1,4 +1,4 @@
-use crate::{chunk::{Chunk, OpCode}, DEBUG_TRACE_EXEC};
+use crate::{chunk::{Chunk, OpCode}, compiler::Compiler, DEBUG_TRACE_EXEC};
 use crate:: stack::LoxStack;
 use crate::value;
 
@@ -19,10 +19,10 @@ impl VM {
         return VM{chunk: Box::new(Chunk::new()), ip: 0, stk: LoxStack::new()};
     }
     
-    pub fn interpret(&mut self, new_chunk: Chunk) -> InterpretResult { 
-        self.chunk = Box::new(new_chunk);
-        self.ip = 0;
-        self.run()
+    pub fn interpret(&mut self, source: &String) -> InterpretResult { 
+        let mut compiler =  Compiler::new(source.to_string());
+        compiler.compile();
+        return InterpretResult::INTERPRET_OK;
     }
 
     fn run(&mut self) -> InterpretResult {

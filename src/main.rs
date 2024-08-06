@@ -1,6 +1,10 @@
 use LoxVM::chunk::*;
 use LoxVM::value::*;
+use LoxVM::vm::InterpretResult;
 use LoxVM::vm::VM;
+
+use std::process;
+use std::fs;
 
 use clap::Parser;
 
@@ -11,35 +15,45 @@ use LoxVM::DEBUG_TRACE_EXEC;
 struct Args{
     #[arg(short,long)]
     debug_flag: bool,
+    file_name: Option<String>
+}
+
+fn repl(){
+    let mut machine = VM::new();
+    let stdin = std::io::stdin();
+    let mut buffer = String::new();
+    loop{
+        print!("> ");
+        match stdin.read_line(&mut buffer) {
+           Ok(_) => {
+                machine.interpret(&buffer);
+           }
+           Err(err_msg) => {
+               println!("{}", err_msg);
+               break;
+           }
+        }
+    } 
+}
+
+fn runFile(fname: String){
+    let mut machine = VM::new();
+    let source =  match fs::read_to_string(fname.clone()) {
+        Ok(src) => src,
+        Err(_) => {println!("Couldn't read in {}", fname); std::process::exit(65)},
+    };
+    match machine.interpret(&source){
+        InterpretResult::INTERPRET_OK => std::process::exit(0),
+        InterpretResult::INTERPRET_COMPILE_ERROR(msg) => {println!("{}",msg); std::process::exit(65)},
+        InterpretResult::INTERPRET_RUNTIME_ERROR(msg) => {println!("{}",msg); std::process::exit(65)},
+    }
 }
 
 fn main() {
     let cli = Args::parse();
     DEBUG_TRACE_EXEC.set(cli.debug_flag).expect("Couldn't initialize debug flag");
-
-    let mut machine = VM::new();
-
-    let mut chunk =  Chunk::new();
-
-    let mut constant = chunk.add_constant(Value::new(1.2));
-	chunk.write_chunk(OpCode::OP_CONSTANT as u8, 123);
-	chunk.write_chunk(constant as u8, 123);
-    constant = chunk.add_constant(Value::new(3.4));
-	chunk.write_chunk(OpCode::OP_CONSTANT as u8, 123);
-	chunk.write_chunk(constant as u8, 123);
-	chunk.write_chunk(OpCode::OP_ADD as u8 , 123);
-    constant = chunk.add_constant(Value::new(5.6));
-	chunk.write_chunk(OpCode::OP_CONSTANT as u8, 123);
-	chunk.write_chunk(constant as u8 , 123);
-	chunk.write_chunk(OpCode::OP_DIVIDE as u8, 123);
-	chunk.write_chunk(OpCode::OP_NEGATE as u8, 123);
-	chunk.write_chunk(OpCode::OP_RETURN as u8, 123);
-
-    let constant:usize = chunk.add_constant(Value::new(1.2));
-    chunk.write_chunk(OpCode::OP_CONSTANT as u8, 123);
-    chunk.write_chunk(constant as u8, 123);
-    chunk.write_chunk(OpCode::OP_NEGATE as u8, 123);
-    chunk.write_chunk(OpCode::OP_RETURN as u8, 123);
-
-    machine.interpret(chunk);
+    match cli.file_name {
+       Some(file_name) => runFile(file_name),
+       None => repl(),
+    }
 }
