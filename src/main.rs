@@ -1,9 +1,6 @@
-use LoxVM::chunk::*;
-use LoxVM::value::*;
 use LoxVM::vm::InterpretResult;
 use LoxVM::vm::VM;
 
-use std::process;
 use std::fs;
 
 use clap::Parser;
