@@ -1,3 +1,4 @@
+#![allow(non_camel_case_types)]
 use crate::{chunk::{Chunk, OpCode}, compiler::Compiler, DEBUG_TRACE_EXEC};
 use crate:: stack::LoxStack;
 use crate::value;

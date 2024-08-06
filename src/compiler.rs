@@ -1,4 +1,5 @@
-use crate::{scanner::*, vm::InterpretResult};
+#![allow(non_camel_case_types)]
+use crate::scanner::*;
 
 pub struct Compiler{
     scanner: Scanner,

@@ -1,3 +1,4 @@
+#![allow(non_camel_case_types)]
 use crate::value::{Value, ValueArray};
 
 #[derive(FromPrimitive)]

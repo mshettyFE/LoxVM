@@ -1,4 +1,4 @@
-
+#![allow(non_camel_case_types)]
 pub struct Scanner{
     source: String,
     start: usize,
@@ -122,8 +122,9 @@ impl Scanner{
                     };
 
                     if comment_start{
+                        let mut is_newline: bool;
                         loop{
-                            let mut is_newline = match self.peek(){
+                            is_newline = match self.peek(){
                                 Some(val) => match *val as char{
                                     '\n' => true,
                                     _ => false,
