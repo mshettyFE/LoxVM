@@ -1,7 +1,8 @@
 #![allow(non_camel_case_types)]
-use crate::{chunk::{Chunk, OpCode}, compiler::Compiler, DEBUG_TRACE_EXEC};
+use crate::{chunk::{Chunk, OpCode}, scanner::Scanner, DEBUG_TRACE_EXEC};
 use crate:: stack::LoxStack;
 use crate::value;
+use crate::parser::Parser;
 
 pub enum InterpretResult {
     INTERPRET_OK,
@@ -10,20 +11,27 @@ pub enum InterpretResult {
 }
 
 pub struct VM {
-    chunk: Box<Chunk>, // currently executing chunk
+    chunk: Chunk, // currently executing chunk
     ip: usize, // index into code section of chunk denoting the next instruction to execute
     stk: LoxStack, // value stack 
 }
 
 impl VM {
     pub fn new() -> Self{
-        return VM{chunk: Box::new(Chunk::new()), ip: 0, stk: LoxStack::new()};
+        return VM{chunk: Chunk::new(), ip: 0, stk: LoxStack::new()};
     }
     
     pub fn interpret(&mut self, source: &String) -> InterpretResult { 
-        let mut compiler =  Compiler::new(source.to_string());
-        compiler.compile();
-        return InterpretResult::INTERPRET_OK;
+        let mut scanner = Scanner::new(source.to_string());
+        let mut cnk = Chunk::new();
+        let mut parser = Parser::new(&mut cnk);
+        if parser.compile(&mut scanner){
+            return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string());
+        }
+        self.chunk = cnk;
+        self.ip = 0;
+        let res = self.run();
+        return res;
     }
 
     fn run(&mut self) -> InterpretResult {

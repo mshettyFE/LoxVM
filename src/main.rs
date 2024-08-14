@@ -4,25 +4,28 @@ use LoxVM::vm::VM;
 
 use std::fs;
 
-use clap::Parser;
+use clap::{Parser, ArgAction};
 
-use LoxVM::DEBUG_TRACE_EXEC;
+use LoxVM::*;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args{
-    #[arg(short,long)]
-    debug_flag: bool,
-    file_name: Option<String>
+    #[arg(default_value="None")]
+    file_name: String,
+    #[arg(short,long, action= ArgAction::SetFalse)]
+    trace_flag: bool,
+    #[arg(short,long, action= ArgAction::SetFalse)]
+    print_code_flag: bool,
 }
 
 fn repl(){
+    print!("Inside REPL\n");
     let mut machine = VM::new();
     let stdin = std::io::stdin();
     let mut buffer = String::new();
     loop{
-        print!("> ");
-        match stdin.read_line(&mut buffer) {
+           match stdin.read_line(&mut buffer) {
            Ok(_) => {
                 machine.interpret(&buffer);
            }
@@ -35,7 +38,7 @@ fn repl(){
 }
 
 fn runFile(fname: String){
-    let mut machine = VM::new();
+        let mut machine = VM::new();
     let source =  match fs::read_to_string(fname.clone()) {
         Ok(src) => src,
         Err(_) => {println!("Couldn't read in {}", fname); std::process::exit(65)},
@@ -49,9 +52,10 @@ fn runFile(fname: String){
 
 fn main() {
     let cli = Args::parse();
-    DEBUG_TRACE_EXEC.set(cli.debug_flag).expect("Couldn't initialize debug flag");
-    match cli.file_name {
-       Some(file_name) => runFile(file_name),
-       None => repl(),
+    DEBUG_TRACE_EXEC.set(cli.trace_flag).expect("Couldn't initialize debug trace flag");
+    DEBUG_PRINT_CODE.set(cli.print_code_flag).expect("Couldn't initialize debug print code flag");
+    if cli.file_name != "None" {
+       runFile(cli.file_name.to_string());
     }
+    repl();
 }
