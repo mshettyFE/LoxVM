@@ -1,58 +1,79 @@
 #![allow(non_camel_case_types)]
-use crate::{chunk, scanner::*};
-use crate::chunk::{Chunk, Disassemble, OpCode};
+use crate::scanner::{Token, TokenType, Scanner};
+use crate::chunk::{Chunk, OpCode};
 use crate::value::Value;
 use crate::DEBUG_PRINT_CODE;
+use std::mem;
 
+// the beating heart of the interpreter
+// requests tokens as needed from a scanner, then converts them too bytecode
+// It's basically as single pass compiler
 pub struct Parser <'a,'b>{
-    compiling_chunk: &'a mut Chunk,
-    current: Token,
+    compiling_chunk: &'a mut Chunk, // current chunk being executed. Could represent a function, or
+                                    // a group of statements
+    // the tokens under consideration
+    current: Token,                 
     previous: Token,
-    hadError: bool,
-    panicMode: bool,
-    rule_table: [ParseRule<'a,'b>; 40],
+    // error handling thingies
+    hadError: bool,                 
+    panicMode: bool,                // if true, denotes that the parser has no idea where it is,
+                                    // and is trying it's best to get back on the right path 
+    rule_table: [ParseRule<'a,'b>; 40], // lookup table which maps Tokens to rules which define
+                                        // prefix and infix functions, as well as the token
+                                        // precedence
 }
 
+// Simple enum to denote which token an error occurred at
 pub enum ErrorTokenLoc{
     PREVIOUS,
     CURRENT
 }
 
-#[derive(Copy, Clone)]
-#[repr(u8)]
+#[derive(Copy, Clone, FromPrimitive)]
 pub enum Precedence {
- PREC_NONE = 0,
- PREC_ASSIGNMENT=1, // =
- PREC_OR=2, // or
- PREC_AND=3, // and
- PREC_EQUALITY=4, // == !=
- PREC_COMPARISON=5, // < > <= >=
- PREC_TERM=6, // + -
- PREC_FACTOR=7, // * /
- PREC_UNARY=8, // ! -
- PREC_CALL=9, // . ()
- PREC_PRIMARY=10
+ PREC_NONE,
+ PREC_ASSIGNMENT, // =
+ PREC_OR, // or
+ PREC_AND, // and
+ PREC_EQUALITY, // == !=
+ PREC_COMPARISON, // < > <= >=
+ PREC_TERM, // + -
+ PREC_FACTOR, // * /
+ PREC_UNARY, // ! -
+ PREC_CALL, // . ()
+ PREC_PRIMARY
 }
 
-
 impl Precedence{
-    pub fn shuffle(&self) -> Result<Self,&str>{
-        match *self {
-            Precedence::PREC_ASSIGNMENT => return Ok(Precedence::PREC_OR),
-            Precedence::PREC_OR => return Ok(Precedence::PREC_AND),
-            Precedence::PREC_AND => return Ok(Precedence::PREC_EQUALITY),
-            Precedence::PREC_EQUALITY => return Ok(Precedence::PREC_COMPARISON),
-            Precedence::PREC_COMPARISON => return Ok(Precedence::PREC_TERM),
-            Precedence::PREC_TERM => return Ok(Precedence::PREC_FACTOR),
-            Precedence::PREC_FACTOR => return Ok(Precedence::PREC_UNARY),
-            Precedence::PREC_UNARY => return Ok(Precedence::PREC_CALL),
-            Precedence::PREC_CALL => return Ok(Precedence::PREC_PRIMARY),
-            _ => return Err("Invalid Precedence increment"),
+    pub fn decrease_prec(&self) -> Result<Self,&str>{
+        // converts the current variant to one that is 1 lower in precedence
+        // If at the lowest precedence, throw an error
+        let as_num = *self as usize;
+        let total_members = mem::variant_count::<Precedence>();
+        // check if as_num is the lowest precedence operator
+        if as_num == (total_members-1) {
+            return Err("Invalid Precedence increment");
         }
+
+        let lower_prec = as_num+1;
+        let output: Precedence =   num::FromPrimitive::from_usize(lower_prec).unwrap();
+        return Ok(output);
     }
 }
 
 #[derive(Copy, Clone)]
+// Some terminology: 
+//      prefix refers to the tokens which *PRECEDE* some expression
+//      infix refers to tokens which are *INSIDE" some expression
+//      precedence refers to in what order expressions get evaluated in
+
+// Hence, ParseRule holds two functions pointers (which can be empty) which denotes what to do if a
+// prefix/infix is encounters
+//
+// This alone is not very useful. However, You can populate a lookup table with these ParseRules,
+// and associate each rule with some token, and assign said token a precedence
+// The nice thing about this is that you can add more "fixes" (like postfix) to the table
+// relatively easily (after the upfront cost of updating the rules table
 pub struct ParseRule<'a,'b>{
     prefix: Option<fn(&mut Parser<'a,'b>, &mut Scanner)>,
     infix: Option<fn(&mut Parser<'a,'b>, &mut Scanner)>,
@@ -64,8 +85,10 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
     let empty_rule: ParseRule = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
     let rules = &mut [empty_rule; 40];
 
- // God this is ugly
+ // placeholder rule to copy and paste
  //    rules[TokenType:: as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
+ 
+ // God this is ugly
  rules[TokenType::TOKEN_LEFT_PAREN as usize] = ParseRule{prefix: Some(Parser::grouping), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_RIGHT_PAREN as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_LEFT_BRACE as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
@@ -116,15 +139,23 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
     }
   }
     pub fn compile(&mut self, scanner: &mut Scanner) -> bool{
+        // interface of parser. Give it a scanner, and it will chew through the tokens, spitting
+        // out byte code
         self.advance(scanner);
         self.expression(scanner);
+        // last token needs to be EOF, otherwise, we have problems
         self.consume(TokenType::TOKEN_EOF, "Expected end of expression.".to_string(), scanner);
         self.endCompiler();
         return !self.hadError;
     }
 
-
-    pub fn advance(&mut self, scanner: &mut Scanner){
+    fn advance(&mut self, scanner: &mut Scanner){
+        // save current token (to be able to later access the lexeme), and then ask the scanner for
+        // a new token
+        //
+        // If an error is encountered, then keep advancing until they stop occurring
+        // Panic mode flag should be set at some point so that you don't fill the log with
+        // pointless error messages while panicking
         self.previous =  self.current.clone();
         loop{
             self.current = scanner.scanToken();
@@ -132,10 +163,28 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
                 TokenType::TOKEN_ERROR => (),
                 _ => break,
             }
-
             self.errorAt(self.current.start.clone(), ErrorTokenLoc::CURRENT);
         }
     }
+    
+    fn consume(&mut self, wanted_token: TokenType, err_msg: String, scanner: &mut Scanner){
+        if self.current.ttype == wanted_token {
+            self.advance(scanner);
+            return
+        }
+        self.errorAt(err_msg, ErrorTokenLoc::CURRENT);
+    }
+    
+    fn endCompiler(&mut self){
+        // tops of chunk with return, and then disassembles if prompted
+        self.emitReturn();
+        if *DEBUG_PRINT_CODE.get().unwrap(){
+            if !self.hadError{
+                let _ = self.currentChunk().disassemble("code".to_string());
+            }
+        }
+    }
+
 
     fn expression(&mut self, scanner: &mut Scanner) {
         self.parsePrecedence(Precedence::PREC_ASSIGNMENT, scanner);
@@ -216,15 +265,8 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         self.emitConstant(value);
     }
 
-    fn consume(&mut self, wanted_token: TokenType, err_msg: String, scanner: &mut Scanner){
-        if self.current.ttype == wanted_token {
-            self.advance(scanner);
-            return
-        }
-        self.errorAt(err_msg, ErrorTokenLoc::CURRENT);
-    }
-
     fn emitByte(&mut self, new_byte: u8){
+        // add a byte to the current chunk
         let line = self.previous.line;
         self.currentChunk().write_chunk(new_byte, line);
     }
@@ -236,7 +278,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
 
     fn emitConstant(&mut self, value: f64){
         let cnst = self.makeConstant(value);
-        self.emitBytes(chunk::OpCode::OP_CONSTANT as u8, cnst);
+        self.emitBytes(OpCode::OP_CONSTANT as u8, cnst);
     }
 
     fn makeConstant(&mut self, new_val: f64) -> u8{
@@ -249,20 +291,11 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
     }
 
 
-    fn endCompiler(&mut self){
-        self.emitReturn();
-        if *DEBUG_PRINT_CODE.get().unwrap(){
-            if !self.hadError{
-                let _ = self.currentChunk().disassemble("code".to_string());
-            }
-        }
-    }
-
     fn binary(&mut self, scanner: &mut Scanner){
         let operatorType = self.previous.ttype.clone();
 
         let rule = self.getRule(operatorType);
-        self.parsePrecedence(rule.unwrap().precedence.shuffle().unwrap(), scanner);
+        self.parsePrecedence(rule.unwrap().precedence.decrease_prec().unwrap(), scanner);
         match operatorType {
             TokenType::TOKEN_PLUS => {self.emitByte(OpCode::OP_ADD as u8); ()},
             TokenType::TOKEN_MINUS => {self.emitByte(OpCode::OP_SUBTRACT as u8); ()},
@@ -273,25 +306,25 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
     }
 
     fn emitReturn(&mut self) {
-        self.emitByte(chunk::OpCode::OP_RETURN as u8);
+        self.emitByte(OpCode::OP_RETURN as u8);
     }
     
     fn currentChunk(&mut self) -> &mut Chunk{
         self.compiling_chunk
     }
 
-
-
     fn errorAt(&mut self, msg: String, which_token: ErrorTokenLoc){
+        // spits out the an error message if not panicking to try and reorient itself
         if self.panicMode {return}
         let token = match which_token{
             ErrorTokenLoc::PREVIOUS => &self.previous,
             ErrorTokenLoc::CURRENT => &self.current,
         };
 
+        // turn on panicMode so that compiler doesn't spit out errors while it reorients itself
         self.panicMode = true;
         
-        eprint!("[line {}] Error", token.line);
+        eprint!("[line {}] Error: ", token.line);
         match token.ttype {
             TokenType::TOKEN_EOF =>{
                 eprint!(" at end");

@@ -1,10 +1,11 @@
 #![allow(non_camel_case_types)]
 
+// scanner class which takes in a string and spits out tokens on demand
 pub struct Scanner{
-    source: String,
-    start: usize,
-    current: usize,
-    line: usize
+    source: String, // original source code
+    start: usize, // the starting index of the current token 
+    current: usize, // the current index of the current token (ie. the next character to process)
+    line: usize // the current line number
 }
 
 #[derive(Debug)]
@@ -32,6 +33,7 @@ pub enum TokenType{
  TOKEN_PRINT, TOKEN_RETURN, TOKEN_SUPER, TOKEN_THIS,
  TOKEN_TRUE, TOKEN_VAR, TOKEN_WHILE,
  TOKEN_ERROR,
+ // Special end of stream token
  TOKEN_EOF
 }
 
@@ -39,8 +41,8 @@ pub enum TokenType{
 #[derive(Clone)]
 pub struct Token{
     pub ttype: TokenType,
-    pub start: String,
-    pub line: usize,
+    pub start: String, // the full string associated with the token
+    pub line: usize, // the line number of the token
 }
 
 impl Scanner{
@@ -50,7 +52,7 @@ impl Scanner{
 
     pub fn scanToken(&mut self) -> Token{
         self.skipWhitespace();
-        self.start = self.current;
+        self.start = self.current; // realign start of token to current token
         if self.isAtEnd(){
             return self.make_token(TokenType::TOKEN_EOF);
         }
@@ -84,15 +86,138 @@ impl Scanner{
         }
     }
 
-    pub fn make_token(&self, a_ttype: TokenType) -> Token{
-        Token{ttype: a_ttype, start: self.source[self.start..self.current].to_string(), line: self.line}
-    } 
-
-    pub fn error_token(&self, message: String) -> Token{
-        Token{ttype: TokenType::TOKEN_ERROR, start: message.clone(), line: self.line}
+    // token generators
+    fn identifier(&mut self) -> Token {
+        // identifiers follow the regex [a-zA-z_0-9]+
+        let mut consume_var_name = true;
+        while consume_var_name {
+            match self.peek() {
+                None => {consume_var_name = false; ()},
+                Some(val) => {
+                    if isAlpha(*val) || isDigit(*val) {
+                        self.advance();
+                        continue;
+                    }
+                    consume_var_name = false;
+                    ()
+                }
+            } 
+        }
+        let ttype = self.identifier_type();
+        return self.make_token(ttype);
     }
 
+    fn number(&mut self) -> Token{
+        // consume the first part of a (potential) floating number
+        self.consume_numbers();
+        // check for period
+        let is_period =  match self.peek(){
+            Some(val) => match *val as char{
+                '.' => true,
+                _ => false,
+            },
+            None => return self.error_token("Trouble parsing number. Invalid index".to_string()),
+        };
+
+        // no period found means we have an integer! so we can stop early
+        if !is_period {
+            return self.make_token(TokenType::TOKEN_NUMBER);
+        }
+
+        // decimal found. need to check if there are things after the decimal
+        let next_val = match self.peekNext() {
+            Some(val) => *val,
+            None => return self.error_token("Trouble parsing number after decimal. Invalid Index".to_string()),
+        };
+
+        // so a period was found, but afterwards, it ain't a digit. So it's possible the period is
+        // part of the next token. Hence, we DON'T consume it, and instead tokenize only the
+        // numbers before it
+        if !isDigit(next_val){
+            return self.make_token(TokenType::TOKEN_NUMBER);
+        }
+        
+        // Finish off tokenining the number
+        self.advance(); // consume the pariod
+        self.consume_numbers(); // get the rest of the digits of the (now confirmed floating point
+                                // number
+        return self.make_token(TokenType::TOKEN_NUMBER); 
+    }
+
+    //
+    // specific consuming helper functions
+    //
+   
+    fn skipWhitespace(&mut self) -> (){
+        // consumes whitespace, which includes comments 
+        loop {
+            // only a single character look ahead. Comments require two
+            let c = match self.peek(){
+                Some(val) => val,
+                None => return (),
+            };
+            match *c as char {
+                // standard white space skipping
+                ' ' | '\r' | '\t' => match self.advance(){Some(_) => continue, None => return ()  },
+                '\n' => {
+                    self.line += 1;
+                    match self.advance(){
+                        Some(_) => continue,
+                        None => return ()
+                    }
+                },
+                // comment parsing
+                '/' => {
+                    // need two / to start comment
+                    let comment_start = match self.peekNext(){
+                        Some(val) => {
+                            match *val as char{
+                                '/' => true,
+                                _ => false,
+                            }
+                        },
+                        None => false
+                    };
+
+                    if !comment_start{return ();}
+                    // consume all characters until newline or EOF
+                    let mut is_newline: bool;
+                    loop{
+                        is_newline = match self.peek(){
+                            Some(val) => match *val as char{
+                                '\n' => true,
+                                _ => false,
+                            },
+                            None => false,
+                        };
+                        if is_newline || self.isAtEnd() {return ();}
+                        self.advance();
+                    }
+                }
+                // something that ain't whitespace. We done here
+                _ => return (),
+            };
+        }
+    }
+
+    fn consume_numbers(&mut self) -> (){
+        // helper function which consumes digit until EOF or non-digit found
+        loop {
+            let character = match self.peek() {
+                Some(val) => { *val  },
+                None => return, // reached end of stream, return early
+            };
+            match isDigit(character) { // advance if character is digit
+                true => {self.advance();}
+                false =>  {break;}
+            }
+        }
+    }
+
+    // matching identifier functions
+    
     fn identifier_type(&mut self) -> TokenType{
+        // simple trie implementation to identify reserved keywords and other identifiers
         match self.source.as_bytes()[self.start] as char{
             'a' => return self.checkKeyword(1, 2, "nd".to_string(), TokenType::TOKEN_AND),
             'c' => return self.checkKeyword(1, 4, "lass".to_string(), TokenType::TOKEN_CLASS),
@@ -129,17 +254,32 @@ impl Scanner{
         return TokenType::TOKEN_IDENTIFIER;
     }
 
-    fn checkKeyword(&self, sub_token_start: usize, sub_token_length: usize, rest: String, ttype: TokenType) -> TokenType{
-        let token_length = unsigned_abs_sub(self.current, self.start);
-        if token_length == sub_token_start+sub_token_length{
-            if self.source.as_bytes()[self.start..self.current] == *rest.as_bytes(){
+    fn checkKeyword(&self, initial_length: usize, remaining_length: usize, expected_remaining_characters: String, ttype: TokenType) -> TokenType{
+        // given:
+        //      the expected length of the first part of a token
+        //      the expected length of the second part of a token
+        //      the expected remaining characters of the token
+        //      the expected output token
+        // 
+        // Verify against the source stream if the current token matches this expectation
+        //
+        // This is used to differentiate reserved words from identifiers (ie. variables, member
+        // names etc.). Hence, 'this' return TokenType::TOKEN_THIS, but 'thisssss" return
+        // TokenType::TOKEN_IDENTIFIER
+
+        let expected_token_length = initial_length+remaining_length;
+        let source_token_length = unsigned_abs_sub(self.current, self.start);
+        let keyword_found = 
+            (source_token_length == expected_token_length) &&
+            // The characters of the 
+            self.source.as_bytes()[self.start..self.current] == *expected_remaining_characters.as_bytes();
+        if keyword_found{ 
                 return ttype;
-            }
         }
         return TokenType::TOKEN_IDENTIFIER;
     }
 
-    pub fn string(&mut self)-> Token{
+    fn string(&mut self)-> Token{
         let mut is_newline: bool;
         let mut is_string_end: bool;
         loop{
@@ -168,138 +308,64 @@ impl Scanner{
         return self.make_token(TokenType::TOKEN_STRING);
     }
 
-    pub fn identifier(&mut self) -> Token {
-        let mut consume_var_name = true;
-        while consume_var_name {
-            match self.peek() {
-                Some(val) => {
-                    if isAlpha(*val) || isDigit(*val) {self.advance();}
-                    else {consume_var_name = false;}
-                    ()
-                },
-                None => {consume_var_name = false; ()}
-            } 
-        }
-        let ttype = self.identifier_type();
-        return self.make_token(ttype);
+    // token generation helper functions
+    fn make_token(&self, a_ttype: TokenType) -> Token{
+        Token{ttype: a_ttype, start: self.source[self.start..self.current].to_string(), line: self.line}
+    } 
+
+    fn error_token(&self, message: String) -> Token{
+        Token{ttype: TokenType::TOKEN_ERROR, start: message.clone(), line: self.line}
     }
 
-    pub fn number(&mut self) -> Token{
-        self.consume_numbers();
-        let is_period =  match self.peek(){
-            Some(val) => match *val as char{
-                '.' => true,
-                _ => false,
-            },
-            None => return self.error_token("Trouble parsing number".to_string()),
-        };
-
-        let next_val = match self.peekNext() {
-            Some(val) => *val,
-            None => return self.error_token("Trouble parsing number".to_string()),
-        };
-
-        if is_period && isDigit(next_val){
-            self.advance();
-            self.consume_numbers();
-        }
-
-        return self.make_token(TokenType::TOKEN_NUMBER);
-        
-    }
-
-    fn consume_numbers(&mut self) -> (){ // true for failure, false for success
-        loop {
-            let character = match self.peek() {
-                Some(val) => { *val  },
-                None => return, // reached end of stream, return early
-            };
-            match isDigit(character) { // advance if character is digit
-                true => {self.advance();}
-                false =>  {break;}
-            }
-        }
-    }
-
+    // stream manipulation helper functions
     fn isAtEnd(&self) -> bool{
+        // test if at the end of the source. 0-based indexing
         self.source.len() <= self.current
     }
 
     fn advance(&mut self) -> Option<&u8>{
+        // advance current index by 1 and return the previous character
+        // can think of this as consuming the current character, then incrementing the pointer
         self.current += 1;
+        // remember that String under the hood is just a vector of u8, which can be indexed
         return self.source.as_bytes().get(self.current-1);
     }
 
+    fn peek(&self) -> Option<&u8>{
+        // returns the next character in the stream
+        return self.source.as_bytes().get(self.current);
+    }
+
     fn Match(&mut self, expected: char) -> bool {
+        // a combination of peek and advance which is conditional and doesn't return the consumed
+        // character
         if self.isAtEnd() {return false;}
         if self.source.as_bytes()[self.current] != expected as u8 {return false;}
+        // Need to discard the successfully matched character!
         self.current += 1;
         return true;
     }
 
-    fn skipWhitespace(&mut self) -> bool{
-        loop {
-            let c = match self.peek(){
-                Some(val) => val,
-                None => return true,
-            };
-            match *c as char {
-                ' ' | '\r' | '\t' => match self.advance(){Some(_) => continue, None => return true  },
-                '\n' => {
-                    self.line += 1;
-                    match self.advance(){Some(_) => continue, None => return true}
-                },
-                '/' => {
-                    let comment_start = match self.peekNext(){
-                        Some(val) => {
-                            match *val as char{
-                                '/' => true,
-                                _ => false,
-                            }
-                        },
-                        None => false
-                    };
-
-                    if comment_start{
-                        let mut is_newline: bool;
-                        loop{
-                            is_newline = match self.peek(){
-                                Some(val) => match *val as char{
-                                    '\n' => true,
-                                    _ => false,
-                                },
-                                None => false,
-                            };
-                            if !is_newline && !self.isAtEnd() {self.advance();}
-                            else{return true}
-                        }
-                    } else {return true;}
-                }
-                _ => return true,
-            };
-        }
-    }
-
-    fn peek(&self) -> Option<&u8>{
-        return self.source.as_bytes().get(self.current);
-    }
-
     fn peekNext(&self) -> Option<&u8>{
+        // returns the next-next character in the stream
         if self.isAtEnd() {return None}
         return self.source.as_bytes().get(self.current+1);
     }
 }
 
+// helper functions that don't need to be tightly coupled with Scanner
 pub fn isDigit(character: u8) -> bool{
         let c = character as char;
         return c >= '0' && c <= '9';
 }
 
 pub fn isAlpha(character: u8) -> bool {
+    // '_' is considered alphabetic since variable names can start with _
         let c = character as char;
         return (c>='a' && c <='z') || (c>='A' && c <='Z') || (c == '_');
 }
 
 pub fn unsigned_abs_sub(left: usize, right: usize) -> usize{
+    // get the absolute difference between two numbers, irrespective of which is larger
     return left.checked_sub(right).unwrap_or(right-left);
 }

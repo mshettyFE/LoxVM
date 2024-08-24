@@ -8,6 +8,7 @@ use clap::{Parser, ArgAction};
 
 use LoxVM::*;
 
+// boilerplate to set up the command line parsing
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args{
@@ -20,6 +21,7 @@ struct Args{
 }
 
 fn repl(){
+    // really bare-bones REPL
     print!("Inside REPL\n");
     let mut machine = VM::new();
     let stdin = std::io::stdin();
@@ -27,10 +29,14 @@ fn repl(){
     loop{
            match stdin.read_line(&mut buffer) {
            Ok(_) => {
-                machine.interpret(&buffer);
+                match machine.interpret(&buffer){
+                    InterpretResult::INTERPRET_OK => (),
+                    InterpretResult::INTERPRET_COMPILE_ERROR(msg) => {println!("{}",msg); ()},
+                    InterpretResult::INTERPRET_RUNTIME_ERROR(msg) => {println!("{}",msg); ()},
+                }
            }
            Err(err_msg) => {
-               println!("{}", err_msg);
+               eprintln!("{}", err_msg);
                break;
            }
         }
@@ -38,15 +44,15 @@ fn repl(){
 }
 
 fn runFile(fname: String){
-        let mut machine = VM::new();
+    let mut machine = VM::new();
     let source =  match fs::read_to_string(fname.clone()) {
         Ok(src) => src,
         Err(_) => {println!("Couldn't read in {}", fname); std::process::exit(65)},
     };
     match machine.interpret(&source){
         InterpretResult::INTERPRET_OK => std::process::exit(0),
-        InterpretResult::INTERPRET_COMPILE_ERROR(msg) => {println!("{}",msg); std::process::exit(65)},
-        InterpretResult::INTERPRET_RUNTIME_ERROR(msg) => {println!("{}",msg); std::process::exit(65)},
+        InterpretResult::INTERPRET_COMPILE_ERROR(msg) => {eprintln!("{}",msg); std::process::exit(65)},
+        InterpretResult::INTERPRET_RUNTIME_ERROR(msg) => {eprintln!("{}",msg); std::process::exit(65)},
     }
 }
 

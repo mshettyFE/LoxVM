@@ -1,3 +1,4 @@
+// For now, a simple wrapper around f64 to give better access control
 #[derive(Clone)]
 pub struct Value {
    pub val: f64,
@@ -12,6 +13,7 @@ impl Value {
     }
 }
 
+// stores the values in a vector for quick lookup
 pub struct ValueArray{
     values: Vec<Value>,
 }
