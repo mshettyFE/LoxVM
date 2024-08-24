@@ -25,7 +25,8 @@ impl VM {
         let mut scanner = Scanner::new(source.to_string());
         let mut cnk = Chunk::new();
         let mut parser = Parser::new(&mut cnk);
-        if parser.compile(&mut scanner){
+        // compile() returns false if an error occurred.
+        if !parser.compile(&mut scanner){
             return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string());
         }
         self.chunk = cnk;

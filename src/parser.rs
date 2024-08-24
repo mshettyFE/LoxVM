@@ -141,6 +141,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
     pub fn compile(&mut self, scanner: &mut Scanner) -> bool{
         // interface of parser. Give it a scanner, and it will chew through the tokens, spitting
         // out byte code
+        // returns false if an error has occurred
         self.advance(scanner);
         self.expression(scanner);
         // last token needs to be EOF, otherwise, we have problems
@@ -186,29 +187,60 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
     }
 
 
+// grammar production functions
+// see https://craftinginterpreters.com/image/compiling-expressions/connections.png
     fn expression(&mut self, scanner: &mut Scanner) {
+        // interpret an expression
         self.parsePrecedence(Precedence::PREC_ASSIGNMENT, scanner);
     }
 
     fn grouping(&mut self, scanner: &mut Scanner){
+        // do a bunch of expression wrapped in parentheses
+        self.expression(scanner);
         self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expected ')' after expression".to_string(), scanner);
     } 
 
     fn unary(&mut self, scanner: &mut Scanner){
+        // once you you hit a unary, you need to process the the following expression while
+        // respecting precedence
         let operatorType = self.previous.ttype.clone();
         self.parsePrecedence(Precedence::PREC_UNARY, scanner);
+        // after the fact, you apply the unary
         match operatorType {
             TokenType::TOKEN_MINUS => {self.emitByte(OpCode::OP_NEGATE as u8); ()},
             _ => (),
         }
     }
+    
+    fn binary(&mut self, scanner: &mut Scanner){
+        let operatorType = self.previous.ttype.clone();
+        let rule = self.getRule(operatorType);
+        self.parsePrecedence(rule.unwrap().precedence.decrease_prec().unwrap(), scanner);
+        match operatorType {
+            TokenType::TOKEN_PLUS => {self.emitByte(OpCode::OP_ADD as u8); ()},
+            TokenType::TOKEN_MINUS => {self.emitByte(OpCode::OP_SUBTRACT as u8); ()},
+            TokenType::TOKEN_STAR => {self.emitByte(OpCode::OP_MULTIPLY as u8); ()},
+            TokenType::TOKEN_SLASH => {self.emitByte(OpCode::OP_DIVIDE as u8); ()},
+            _ => (),
+        }
+    }
+    
+    fn number(&mut self, _scanner: &mut Scanner){
+        // cast the previous token's string into a double and add said constant to chunk
+        let value: f64 = self.previous.start.parse().unwrap();  
+        self.emitConstant(value);
+    }
 
+
+// the function that handles precedence and allows recursion to occur
     fn parsePrecedence(&mut self, init_precedence: Precedence, scanner: &mut Scanner){
         self.advance(scanner);
+        // Check if a prefix operation needs to be performed
         let get_prefix: Option<ParseRule> = self.getRule(self.previous.ttype.clone());
         match get_prefix {
             Some(val) => {
                 match val.prefix{
+                    // after unwrapping everything, execute the prefix function
                     Some(prefix_func) => prefix_func(self, scanner),
                     None => {
                         self.errorAt("Expect expression".to_string(), ErrorTokenLoc::PREVIOUS);
@@ -222,8 +254,8 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
             }
         }
 
+        // perform any infix operations
         loop {
-        // check for condition first
             let is_cur_rule = self.getRule(self.current.ttype);
             let cur_rule = match is_cur_rule {
                 Some(val) => val,
@@ -233,6 +265,13 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
                 },
             };
 
+            // you stop performing infix operations if the current precedence falls below the
+            // initial one 
+            if init_precedence as u8 > cur_rule.precedence as u8 {break;}
+            // otherwise, perform the infix operation and keep going
+            // update current and previous tokens
+            self.advance(scanner);
+            // now need to read previous rule (ie. the binary op) and perform the infix
             let is_prev_rule = self.getRule(self.previous.ttype);
             let prev_rule = match is_prev_rule {
                 Some(val) => val,
@@ -242,27 +281,23 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
                 },
             };
 
-
-            if init_precedence as u8 > cur_rule.precedence as u8 {break;}
-            self.advance(scanner);
-            prev_rule.infix.expect("Invalid infix rule")(self, scanner);
-            
+            match prev_rule.infix {
+                Some(function) => function(self, scanner),
+                None => {
+                    self.errorAt("Invalid infix rule".to_string(), ErrorTokenLoc::PREVIOUS);
+                    return;
+                }
+            }
         }
-
-
     }
 
     fn getRule(&mut self, ttype: TokenType)  -> Option<ParseRule<'a,'b>>{
+        // return the corresponding parseRule for a given token from the lookup table
         let index = ttype as usize;
         match self.rule_table.get(index){
             Some(val) => return Some(*val),
             None => None,
         }
-    }
-
-    fn number(&mut self, _scanner: &mut Scanner){
-        let value: f64 = self.previous.start.parse().unwrap();  
-        self.emitConstant(value);
     }
 
     fn emitByte(&mut self, new_byte: u8){
@@ -271,38 +306,27 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         self.currentChunk().write_chunk(new_byte, line);
     }
 
-    fn emitBytes(&mut self, byte1: u8, byte2: u8){
+    fn emitTwoBytes(&mut self, byte1: u8, byte2: u8){
+        // What do you think it does?
         self.emitByte(byte1);
         self.emitByte(byte2);
     }
 
     fn emitConstant(&mut self, value: f64){
+        // adds the opcode and the constant index
         let cnst = self.makeConstant(value);
-        self.emitBytes(OpCode::OP_CONSTANT as u8, cnst);
+        self.emitTwoBytes(OpCode::OP_CONSTANT as u8, cnst);
     }
 
     fn makeConstant(&mut self, new_val: f64) -> u8{
-        let cnst = self.currentChunk().add_constant(Value{val: new_val});  
-        if cnst > std::u8::MAX as usize {
+        let cnst_index = self.currentChunk().add_constant(Value{val: new_val}); 
+        // arbitrarily cap number of constants at u8::MAX because you have to draw the line
+        // somewhere
+        if cnst_index > std::u8::MAX as usize {
             self.errorAt("Too many constants in one chunk".to_string(), ErrorTokenLoc::PREVIOUS);
             return 0;
         }
-        return cnst as u8;
-    }
-
-
-    fn binary(&mut self, scanner: &mut Scanner){
-        let operatorType = self.previous.ttype.clone();
-
-        let rule = self.getRule(operatorType);
-        self.parsePrecedence(rule.unwrap().precedence.decrease_prec().unwrap(), scanner);
-        match operatorType {
-            TokenType::TOKEN_PLUS => {self.emitByte(OpCode::OP_ADD as u8); ()},
-            TokenType::TOKEN_MINUS => {self.emitByte(OpCode::OP_SUBTRACT as u8); ()},
-            TokenType::TOKEN_STAR => {self.emitByte(OpCode::OP_MULTIPLY as u8); ()},
-            TokenType::TOKEN_SLASH => {self.emitByte(OpCode::OP_DIVIDE as u8); ()},
-            _ => (),
-        }
+        return cnst_index as u8;
     }
 
     fn emitReturn(&mut self) {

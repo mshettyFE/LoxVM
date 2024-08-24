@@ -14,9 +14,9 @@ use LoxVM::*;
 struct Args{
     #[arg(default_value="None")]
     file_name: String,
-    #[arg(short,long, action= ArgAction::SetFalse)]
+    #[arg(short,long, action= ArgAction::SetTrue)]
     trace_flag: bool,
-    #[arg(short,long, action= ArgAction::SetFalse)]
+    #[arg(short,long, action= ArgAction::SetTrue)]
     print_code_flag: bool,
 }
 

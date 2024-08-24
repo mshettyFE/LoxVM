@@ -45,7 +45,6 @@ impl Chunk {
 
     pub fn get_constant(&self, index: usize) -> Option<&Value>{
         self.value_array.get_value(index)
-
     }
 
 
@@ -123,5 +122,4 @@ impl Chunk {
     }
     Ok(())
   }
-
 }
