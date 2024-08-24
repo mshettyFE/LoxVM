@@ -1,8 +1,10 @@
 #![allow(non_camel_case_types)]
-use crate::{chunk::{Chunk, OpCode}, scanner::Scanner, DEBUG_TRACE_EXEC};
+use crate::{chunk::{Chunk, OpCode}, parser::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use crate:: stack::LoxStack;
-use crate::value;
+use crate::value::*;
 use crate::parser::Parser;
+
+use core::fmt;
 
 pub enum InterpretResult {
     INTERPRET_OK,
@@ -80,32 +82,93 @@ impl VM {
                     };
                     self.stk.push(constant.clone());
                },
+               OpCode::OP_NIL => {
+                    self.stk.push(Value::VAL_NIL)
+               }
+               OpCode::OP_TRUE => {
+                    self.stk.push(Value::VAL_BOOL(true))
+               }
+               OpCode::OP_FALSE => {
+                    self.stk.push(Value::VAL_BOOL(false))
+               }
+               OpCode::OP_EQUAL => {
+                   let a = match self.stk.peek(0){
+                        Some(val) => {val},
+                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 0));},
+                    };
+                   let b = match self.stk.peek(1){
+                        Some(val) => {val},
+                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 1));},
+                    };
+                   self.stk.push(Value::VAL_BOOL(a==b));
+               },
+               OpCode::OP_GREATER => {
+                   let a = match self.stk.peek(0){
+                        Some(val) => {val},
+                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 0));},
+                    };
+                   let b = match self.stk.peek(1){
+                        Some(val) => {val},
+                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 1));},
+                    };
+                   self.stk.push(Value::VAL_BOOL(a< b));
+               },
+               OpCode::OP_LESS => {
+                   let a = match self.stk.peek(0){
+                        Some(val) => {val},
+                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 0));},
+                    };
+                   let b = match self.stk.peek(1){
+                        Some(val) => {val},
+                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 1));},
+                    };
+                   self.stk.push(Value::VAL_BOOL(a> b));
+               },
                OpCode::OP_NEGATE => {
-                    let pre_val = match self.stk.pop() {
+                    let peek_val = match self.stk.peek(0) {
                         Some(v) => v,
                         None => return InterpretResult::INTERPRET_RUNTIME_ERROR("Stack is empty".to_string()),
                     };
-                    self.stk.push(value::Value{val: -pre_val.val});
+
+                    match peek_val {
+                        Value::VAL_NUMBER(num) => {
+                            // remove from stack, but don't check value since we already have it
+                            // from the peek operation
+                            self.stk.pop();
+                            self.stk.push(Value::VAL_NUMBER(-num) );
+                        },
+                        _ => {
+                           return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Operand must be a number."))); 
+                        }
+                     }
                },
                OpCode::OP_ADD |
                OpCode::OP_SUBTRACT |
                OpCode::OP_DIVIDE |
                OpCode::OP_MULTIPLY => {
-                    let b = match self.stk.pop(){
-                        Some(v) => v,
-                        None => return InterpretResult::INTERPRET_RUNTIME_ERROR("Stack is empty".to_string())
+                   let a: f64 = match self.peek_num(0){
+                        Ok(val) => {val},
+                        Err(err_msg) => {return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg);},
                     };
-                    let a = match self.stk.pop(){
-                        Some(v) => v,
-                        None => return InterpretResult::INTERPRET_RUNTIME_ERROR("Stack is empty".to_string())
-                    };
+                   let b: f64 = match self.peek_num(1){
+                        Ok(val) => {val},
+                        Err(err_msg) => {return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg);},
+                   };
+                    // assuming you got here, you need to remove a and b from the stack first
+                    self.stk.pop();
+                    self.stk.pop();
+
                     match opcode {
-                        OpCode::OP_ADD => self.stk.push(value::Value{val: (a.val+b.val)}),
-                        OpCode::OP_SUBTRACT => self.stk.push(value::Value{val: (a.val-b.val)}),
-                        OpCode::OP_MULTIPLY => self.stk.push(value::Value{val: (a.val*b.val)}),
-                        OpCode::OP_DIVIDE => self.stk.push(value::Value{val: (a.val/b.val)}),
+                        OpCode::OP_ADD => self.stk.push(Value::VAL_NUMBER(a+b)),
+                        OpCode::OP_SUBTRACT => self.stk.push(Value::VAL_NUMBER(a-b)),
+                        OpCode::OP_MULTIPLY => self.stk.push(Value::VAL_NUMBER(a*b)),
+                        OpCode::OP_DIVIDE => self.stk.push(Value::VAL_NUMBER(a/b)),
                         _ => return InterpretResult::INTERPRET_RUNTIME_ERROR("Something went horrible wrong when trying to do a binary operation".to_string())
                     }
+               }
+               OpCode::OP_NOT => {
+                   let val = self.stk.pop().unwrap();
+                    self.stk.push(Value::VAL_BOOL(isFalsey(val)));
                }
             }
         }
@@ -118,5 +181,29 @@ impl VM {
         };
         self.ip += 1;
         return output;
+    }
+ 
+    fn peek_num(&mut self,  index :usize) -> Result<f64, String> {
+        let b = match self.stk.peek(index){
+            Some(v) => {
+                let out = match v{
+                    Value::VAL_NUMBER(num) => num,
+                    _ =>{return Err("Operands must be numbers.".to_string())}
+                };
+                out
+            },
+            None => return Err("Stack is empty".to_string())
+        };
+        Ok(b)
+    }
+
+    fn formatRunTimeError(&mut self, formatted_message: fmt::Arguments) -> String{
+        let err_msg = format!("{}",formatted_message);
+        // ip points to the NEXT instruction to be executed, so need to decrement ip by 1
+        let instruction = self.ip-1;
+        let line = self.chunk.get_line(instruction).unwrap();
+        let line_err = format!("[line {}] in script\n", line);
+        self.stk.reset();
+        return format!("{}{}", err_msg,line_err);
     }
 }

@@ -4,15 +4,21 @@ use crate::value::{Value, ValueArray};
 // Growing list of supported opcodes
 #[derive(FromPrimitive)]
 pub enum OpCode {
-    // each entry corresponds to a single u8
+    // each entry corresponds to a single u8 unless noted otherwise
     OP_CONSTANT, // format: OPCODE, ValueArrayIndex
-    // format of arithmetic ops: 
+    OP_NIL,
+    OP_TRUE,
+    OP_FALSE,
     OP_ADD,
+    OP_EQUAL,
+    OP_GREATER,
+    OP_LESS,
     OP_SUBTRACT,
     OP_MULTIPLY,
     OP_DIVIDE,
-    OP_NEGATE, // format:
-    OP_RETURN, // format: OPCODE
+    OP_NOT,
+    OP_NEGATE,
+    OP_RETURN,
 }
 
 pub struct Chunk {
@@ -47,9 +53,12 @@ impl Chunk {
         self.value_array.get_value(index)
     }
 
-
     pub fn get_count(&self) ->usize{
         self.code.len()
+    }
+
+    pub fn get_line(&self, index: usize) -> Option<&usize>{
+        self.lines.get(index)
     }
 
   pub fn disassemble_instruction(&self, offset: usize) -> Result<usize, String>{
@@ -70,12 +79,20 @@ impl Chunk {
                 Some(instr) => {
                 let new_offset = match instr{ // dispatch to different output based on instr
                     OpCode::OP_RETURN => self.simple_instruction("OP_RETURN".to_string(), offset)?,
+                    OpCode::OP_NIL => self.simple_instruction("OP_NIL".to_string(), offset)?,
+                    OpCode::OP_TRUE => self.simple_instruction("OP_TRUE".to_string(), offset)?,
+                    OpCode::OP_FALSE => self.simple_instruction("OP_FALSE".to_string(), offset)?,
+                    OpCode::OP_EQUAL => self.simple_instruction("OP_EQUAL".to_string(), offset)?,
+                    OpCode::OP_GREATER => self.simple_instruction("OP_GREATER".to_string(), offset)?,
+                    OpCode::OP_LESS => self.simple_instruction("OP_LESS".to_string(), offset)?,
                     OpCode::OP_NEGATE => self.simple_instruction("OP_NEGATE".to_string(), offset)?,
                     OpCode::OP_CONSTANT => self.constant_instruction("OP_CONSTANT".to_string(), offset)?,
                     OpCode::OP_ADD => self.simple_instruction("OP_ADD".to_string(), offset)?,
                     OpCode::OP_SUBTRACT => self.simple_instruction("OP_SUBTRACT".to_string(), offset)?,
                     OpCode::OP_MULTIPLY => self.simple_instruction("OP_MULTIPLY".to_string(), offset)?,
                     OpCode::OP_DIVIDE => self.simple_instruction("OP_DIVIDE".to_string(), offset)?,
+                    OpCode::OP_NOT => self.simple_instruction("OP_NOT".to_string(), offset)?,
+
                     };
                 return Ok(new_offset);
                 }

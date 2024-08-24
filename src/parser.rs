@@ -5,6 +5,8 @@ use crate::value::Value;
 use crate::DEBUG_PRINT_CODE;
 use std::mem;
 
+const TOTAL_RULES: usize = 40;
+
 // the beating heart of the interpreter
 // requests tokens as needed from a scanner, then converts them too bytecode
 // It's basically as single pass compiler
@@ -18,7 +20,7 @@ pub struct Parser <'a,'b>{
     hadError: bool,                 
     panicMode: bool,                // if true, denotes that the parser has no idea where it is,
                                     // and is trying it's best to get back on the right path 
-    rule_table: [ParseRule<'a,'b>; 40], // lookup table which maps Tokens to rules which define
+    rule_table: [ParseRule<'a,'b>; TOTAL_RULES], // lookup table which maps Tokens to rules which define
                                         // prefix and infix functions, as well as the token
                                         // precedence
 }
@@ -29,7 +31,7 @@ pub enum ErrorTokenLoc{
     CURRENT
 }
 
-#[derive(Copy, Clone, FromPrimitive)]
+#[derive(Copy, Clone, FromPrimitive, Debug)]
 pub enum Precedence {
  PREC_NONE,
  PREC_ASSIGNMENT, // =
@@ -74,6 +76,7 @@ impl Precedence{
 // and associate each rule with some token, and assign said token a precedence
 // The nice thing about this is that you can add more "fixes" (like postfix) to the table
 // relatively easily (after the upfront cost of updating the rules table
+#[derive(Debug)]
 pub struct ParseRule<'a,'b>{
     prefix: Option<fn(&mut Parser<'a,'b>, &mut Scanner)>,
     infix: Option<fn(&mut Parser<'a,'b>, &mut Scanner)>,
@@ -83,7 +86,7 @@ pub struct ParseRule<'a,'b>{
 impl <'a,'b> Parser<'a,'b> where 'a: 'b{
   pub fn new (chnk: &'a mut Chunk) -> Self{
     let empty_rule: ParseRule = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
-    let rules = &mut [empty_rule; 40];
+    let rules = &mut [empty_rule; TOTAL_RULES];
 
  // placeholder rule to copy and paste
  //    rules[TokenType:: as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
@@ -100,31 +103,31 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
  rules[TokenType::TOKEN_SEMICOLON as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_SLASH as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_FACTOR};
  rules[TokenType::TOKEN_STAR as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_FACTOR};
- rules[TokenType::TOKEN_BANG as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_BANG_EQUAL as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_BANG as usize] = ParseRule{prefix: Some(Parser::unary), infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_BANG_EQUAL as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_EQUALITY};
  rules[TokenType::TOKEN_EQUAL as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_EQUAL_EQUAL as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_GREATER as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_GREATER_EQUAL as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_LESS as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_LESS_EQUAL as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_EQUAL_EQUAL as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_EQUALITY};
+ rules[TokenType::TOKEN_GREATER as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_COMPARISON};
+ rules[TokenType::TOKEN_GREATER_EQUAL as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence:  Precedence::PREC_COMPARISON};
+ rules[TokenType::TOKEN_LESS as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_COMPARISON};
+ rules[TokenType::TOKEN_LESS_EQUAL as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_COMPARISON};
  rules[TokenType::TOKEN_IDENTIFIER as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_STRING as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_NUMBER as usize] = ParseRule{prefix: Some(Parser::number), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_AND as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_CLASS as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_ELSE as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_FALSE as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_FALSE as usize] = ParseRule{prefix: Some(Parser::literal), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_FOR as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_FUN as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_IF as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_NIL as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_NIL as usize] = ParseRule{prefix: Some(Parser::literal), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_OR as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_PRINT as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_RETURN as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_SUPER as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_THIS as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_TRUE as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_TRUE as usize] = ParseRule{prefix: Some(Parser::literal), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_VAR as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_WHILE as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_ERROR as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
@@ -207,6 +210,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         self.parsePrecedence(Precedence::PREC_UNARY, scanner);
         // after the fact, you apply the unary
         match operatorType {
+            TokenType::TOKEN_BANG => {self.emitByte(OpCode::OP_NOT as u8); () },
             TokenType::TOKEN_MINUS => {self.emitByte(OpCode::OP_NEGATE as u8); ()},
             _ => (),
         }
@@ -217,6 +221,12 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         let rule = self.getRule(operatorType);
         self.parsePrecedence(rule.unwrap().precedence.decrease_prec().unwrap(), scanner);
         match operatorType {
+            TokenType::TOKEN_BANG_EQUAL => {self.emitTwoBytes(OpCode::OP_EQUAL as u8, OpCode::OP_NOT as u8); ()},
+            TokenType::TOKEN_EQUAL_EQUAL => {self.emitByte(OpCode::OP_EQUAL as u8); ()},
+            TokenType::TOKEN_GREATER => {self.emitByte(OpCode::OP_GREATER as u8); ()},
+            TokenType::TOKEN_GREATER_EQUAL => {self.emitTwoBytes(OpCode::OP_LESS as u8, OpCode::OP_NOT as u8); ()},
+            TokenType::TOKEN_LESS => {self.emitByte(OpCode::OP_LESS as u8); ()},
+            TokenType::TOKEN_LESS_EQUAL => {self.emitTwoBytes(OpCode::OP_GREATER as u8, OpCode::OP_NOT as u8); ()},
             TokenType::TOKEN_PLUS => {self.emitByte(OpCode::OP_ADD as u8); ()},
             TokenType::TOKEN_MINUS => {self.emitByte(OpCode::OP_SUBTRACT as u8); ()},
             TokenType::TOKEN_STAR => {self.emitByte(OpCode::OP_MULTIPLY as u8); ()},
@@ -227,8 +237,17 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
     
     fn number(&mut self, _scanner: &mut Scanner){
         // cast the previous token's string into a double and add said constant to chunk
-        let value: f64 = self.previous.start.parse().unwrap();  
-        self.emitConstant(value);
+        let value: f64 = self.previous.start.parse().unwrap(); 
+        self.emitConstant(Value::VAL_NUMBER(value));
+    }
+
+    fn literal(&mut self, _scanner: &mut Scanner){
+        match self.previous.ttype {
+            TokenType::TOKEN_FALSE => {self.emitByte(OpCode::OP_FALSE as u8); ()},
+            TokenType::TOKEN_TRUE => {self.emitByte(OpCode::OP_TRUE as u8); ()},
+            TokenType::TOKEN_NIL => {self.emitByte(OpCode::OP_NIL as u8); ()},
+            _ => {()}
+        } 
     }
 
 
@@ -312,14 +331,14 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         self.emitByte(byte2);
     }
 
-    fn emitConstant(&mut self, value: f64){
+    fn emitConstant(&mut self, value: Value){
         // adds the opcode and the constant index
         let cnst = self.makeConstant(value);
         self.emitTwoBytes(OpCode::OP_CONSTANT as u8, cnst);
     }
 
-    fn makeConstant(&mut self, new_val: f64) -> u8{
-        let cnst_index = self.currentChunk().add_constant(Value{val: new_val}); 
+    fn makeConstant(&mut self, new_val: Value) -> u8{
+        let cnst_index = self.currentChunk().add_constant(new_val); 
         // arbitrarily cap number of constants at u8::MAX because you have to draw the line
         // somewhere
         if cnst_index > std::u8::MAX as usize {
@@ -358,7 +377,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
                 () 
             }
             _ => {
-                eprint!("at {}", token.start)
+                eprint!("at {} :", token.start)
             }
         }
 
@@ -366,3 +385,15 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         self.hadError = true;
     }
 }
+
+pub fn isFalsey(value: Value)-> bool{
+    // Ruby style truthy-ness
+    //      nil and false are   false
+    //      everything else is true
+    match value {
+        Value::VAL_NIL => {return true},
+        Value::VAL_BOOL(val) => {return !val},
+        _ => {return  false}        
+    }
+}
+

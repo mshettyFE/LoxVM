@@ -1,15 +1,26 @@
-// For now, a simple wrapper around f64 to give better access control
-#[derive(Clone)]
-pub struct Value {
-   pub val: f64,
+#![allow(non_camel_case_types)]
+
+#[derive(Clone, PartialEq, PartialOrd)]
+pub enum Value {
+    VAL_NIL,
+    VAL_BOOL(bool),
+    VAL_NUMBER(f64),
 }
 
 impl Value {
-    pub fn new(v: f64) ->Self{
-        Value{val:v}
-    }
     pub fn print_value(&self){
-        print!("{:<.5}",self.val);
+        match self{
+            Value::VAL_NIL => {print!("NIL")}
+            Value::VAL_BOOL(truth_val) => {
+               match truth_val{
+                    true => {print!("true")},
+                    false => {print!("false")}
+               } 
+            }
+            Value::VAL_NUMBER(num) => {
+                print!("{:<.5}", num);
+            }
+        }
     }
 }
 

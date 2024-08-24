@@ -242,7 +242,7 @@ impl Scanner{
                 if unsigned_abs_sub(self.current, self.start) > 1{
                     match self.source.as_bytes()[self.start+1] as char {
                         'h' => return self.checkKeyword(2, 2, "is".to_string(), TokenType::TOKEN_THIS),
-                        'r' => return self.checkKeyword(2, 2, "ue".to_string(), TokenType::TOKEN_TRUE),
+                        'r' => {return self.checkKeyword(2, 2, "ue".to_string(), TokenType::TOKEN_TRUE)},
                         _ => return TokenType::TOKEN_IDENTIFIER,
                     }
                 }
@@ -269,10 +269,10 @@ impl Scanner{
 
         let expected_token_length = initial_length+remaining_length;
         let source_token_length = unsigned_abs_sub(self.current, self.start);
+        let starting_offset = self.start+initial_length;
         let keyword_found = 
             (source_token_length == expected_token_length) &&
-            // The characters of the 
-            self.source.as_bytes()[self.start..self.current] == *expected_remaining_characters.as_bytes();
+            self.source.as_bytes()[starting_offset..self.current] == *expected_remaining_characters.as_bytes();
         if keyword_found{ 
                 return ttype;
         }
@@ -367,5 +367,8 @@ pub fn isAlpha(character: u8) -> bool {
 
 pub fn unsigned_abs_sub(left: usize, right: usize) -> usize{
     // get the absolute difference between two numbers, irrespective of which is larger
-    return left.checked_sub(right).unwrap_or(right-left);
+    let l = left as isize;
+    let r = right as isize;
+    let result = l-r;
+    return result.abs() as usize;
 }
