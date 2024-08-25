@@ -100,29 +100,49 @@ impl VM {
                         Some(val) => {val},
                         None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 1));},
                     };
-                   self.stk.push(Value::VAL_BOOL(a==b));
+                   self.stk.push(Value::VAL_BOOL(valuesEqual(a, b)));
                },
                OpCode::OP_GREATER => {
                    let a = match self.stk.peek(0){
-                        Some(val) => {val},
+                        Some(val) => {
+                            match val {
+                                Value::VAL_NUMBER(num) => {num},
+                                _ => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Cant compare something greater than if it ain't a number"));}
+                            }
+                        },
                         None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 0));},
                     };
                    let b = match self.stk.peek(1){
-                        Some(val) => {val},
-                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 1));},
-                    };
-                   self.stk.push(Value::VAL_BOOL(a< b));
-               },
-               OpCode::OP_LESS => {
-                   let a = match self.stk.peek(0){
-                        Some(val) => {val},
-                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 0));},
-                    };
-                   let b = match self.stk.peek(1){
-                        Some(val) => {val},
+                        Some(val) => {
+                            match val {
+                                Value::VAL_NUMBER(num) => {num},
+                                _ => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Cant compare something greater than if it ain't a number"));}
+                            }
+                        },
                         None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 1));},
                     };
                    self.stk.push(Value::VAL_BOOL(a> b));
+               },
+               OpCode::OP_LESS => {
+                   let a = match self.stk.peek(0){
+                        Some(val) => {
+                            match val {
+                                Value::VAL_NUMBER(num) => {num},
+                                _ => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Cant compare something less than if it ain't a number"));}
+                            }
+                        },
+                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 0));},
+                    };
+                   let b = match self.stk.peek(1){
+                        Some(val) => {
+                            match val {
+                                Value::VAL_NUMBER(num) => {num},
+                                _ => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Cant compare something less than if it ain't a number"));}
+                            }
+                        },
+                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 1));},
+                    };
+                   self.stk.push(Value::VAL_BOOL(a< b));
                },
                OpCode::OP_NEGATE => {
                     let peek_val = match self.stk.peek(0) {

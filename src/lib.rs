@@ -6,6 +6,7 @@ pub mod vm;
 pub mod stack;
 pub mod scanner;
 pub mod parser;
+pub mod object;
 
 extern crate num;
 #[macro_use]
