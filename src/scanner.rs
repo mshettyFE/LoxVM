@@ -1,5 +1,4 @@
 #![allow(non_camel_case_types)]
-
 // scanner class which takes in a string and spits out tokens on demand
 pub struct Scanner{
     source: String, // original source code
@@ -280,31 +279,31 @@ impl Scanner{
     }
 
     fn string(&mut self)-> Token{
-        let mut is_newline: bool;
-        let mut is_string_end: bool;
         loop{
+            let is_newline: bool;
+            let is_string_end: bool;
             match self.peek() {
                 Some(val) => {
                     match *val as char{
                         '\n' => {is_newline = true; is_string_end= false;},
                         '"' => {is_newline = false; is_string_end= true;},
                         _ => {is_newline = false; is_string_end = false},
-                    }          
+                    } 
                 },
-                None => return self.error_token("Unterminated string.".to_string()),
+                None => {is_newline = false; is_string_end = false;},
             }
             if is_string_end || self.isAtEnd() {
                 break;
             }
             if is_newline {
                 self.line += 1;
-                self.advance();
-                
             }
+            self.advance();                
         }
 
         if self.isAtEnd() {return self.error_token("Unterminated string.".to_string());}
-
+        // advance one more to avoid looping eternally
+        self.advance();
         return self.make_token(TokenType::TOKEN_STRING);
     }
 

@@ -1,4 +1,7 @@
 #![allow(non_camel_case_types)]
+use std::rc::Rc;
+use std::cell::RefCell;
+use crate::object::{LoxString, Obj};
 use crate::scanner::{Token, TokenType, Scanner};
 use crate::chunk::{Chunk, OpCode};
 use crate::value::Value;
@@ -112,7 +115,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
  rules[TokenType::TOKEN_LESS as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_COMPARISON};
  rules[TokenType::TOKEN_LESS_EQUAL as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_COMPARISON};
  rules[TokenType::TOKEN_IDENTIFIER as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_STRING as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_STRING as usize] = ParseRule{prefix: Some(Parser::string), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_NUMBER as usize] = ParseRule{prefix: Some(Parser::number), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_AND as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_CLASS as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
@@ -250,6 +253,15 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         } 
     }
 
+    fn string(&mut self, _scanner: &mut Scanner){
+        let quoted = self.previous.start.clone();
+        let len = quoted.len();
+        // trim of quotes
+        let unquoted = &quoted[1..len-1];
+        let new_string = LoxString::new(unquoted.to_string());
+        let data =  Value::VAL_OBJ(Rc::new( RefCell::new(new_string)));
+        self.emitConstant(data); 
+    }
 
 // the function that handles precedence and allows recursion to occur
     fn parsePrecedence(&mut self, init_precedence: Precedence, scanner: &mut Scanner){
@@ -314,8 +326,8 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         // return the corresponding parseRule for a given token from the lookup table
         let index = ttype as usize;
         match self.rule_table.get(index){
-            Some(val) => return Some(*val),
-            None => None,
+            Some(val) => {return Some(*val)},
+            None => {println!("Nothing");None},
         }
     }
 

@@ -1,13 +1,16 @@
 #![allow(non_camel_case_types)]
 
+use core::panic;
+use std::cell::RefCell;
+use std::rc::Rc;
 use crate::object::*;
 
-#[derive(Clone, PartialEq, PartialOrd)]
+#[derive(Clone)]
 pub enum Value {
     VAL_NIL,
     VAL_BOOL(bool),
     VAL_NUMBER(f64),
-    VAL_OBJ(Obj),
+    VAL_OBJ(Rc<RefCell<dyn Obj>>),
 }
 
 impl Value {
@@ -22,9 +25,10 @@ impl Value {
             }
             Value::VAL_NUMBER(num) => {
                 print!("{:<.5}", num);
-            }
-            Value::VAL_OBJ(objt) =>{
-                
+            },
+            Value::VAL_OBJ(cur_obj) => {
+                let x = cur_obj.borrow();
+                x.print_obj();   
             }
         }
     }
@@ -44,7 +48,22 @@ pub fn valuesEqual(a: Value, b: Value) -> bool{
         let b_val = match b {Value::VAL_NUMBER(val) => val, _ => 0.0};
         return a_val == b_val;
     } else{
-        return false;
+        let a_tmp = match a{Value::VAL_OBJ(cur_obj) => cur_obj, _ => panic!("Should be able to cast to object here!")};
+        let b_tmp = match b{Value::VAL_OBJ(cur_obj) => cur_obj, _ => panic!("Should be able to cast to object here!")};
+        let a_obj = a_tmp.borrow();
+        let b_obj = b_tmp.borrow();
+        let condition = a_obj.get_type() == b_obj.get_type(); 
+        if condition {
+            match a_obj.get_type() {
+                ObjType::OBJ_STRING => {
+                    let a_val = a_obj.any().downcast_ref::<LoxString>().unwrap().val.clone();
+                    let b_val = b_obj.any().downcast_ref::<LoxString>().unwrap().val.clone();
+                    return a_val == b_val;
+                },
+            }
+        } else{
+            return false;
+        }
     } 
 }
 
