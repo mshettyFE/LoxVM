@@ -1,5 +1,7 @@
 #![allow(non_camel_case_types)]
-use crate::{chunk::{Chunk, OpCode}, parser::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
+use std::cell::RefCell;
+use std::rc::Rc;
+use crate::{chunk::{Chunk, OpCode}, object::LoxString, parser::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use crate:: stack::LoxStack;
 use crate::value::*;
 use crate::parser::Parser;
@@ -162,30 +164,87 @@ impl VM {
                         }
                      }
                },
-               OpCode::OP_ADD |
+               OpCode::OP_ADD => {
+                   // check if top of stack are both strings
+                   let a_string: Result<String, String> = match self.peek_stack(0, 
+                       std::mem::discriminant(&Value::VAL_OBJ(Rc::new(RefCell::new(LoxString::new("".to_string())))))){
+                        Ok(val) => { match val { Value::VAL_OBJ(v) => {
+                            let a_obj = v.borrow(); 
+                            Ok(a_obj.any().downcast_ref::<LoxString>().unwrap().val.clone())
+                        }, _ => {panic!("Unreachable");}}}
+                        Err(err_msg) => {Err(err_msg)},
+                   };
+                   let b_string: Result<String, String> = match self.peek_stack(1, 
+                    std::mem::discriminant(&Value::VAL_OBJ(Rc::new(RefCell::new(LoxString::new("".to_string())))))){
+                        Ok(val) => { match val { Value::VAL_OBJ(v) => {
+                            let b_obj = v.borrow(); 
+                            Ok(b_obj.any().downcast_ref::<LoxString>().unwrap().val.clone())
+                        }, _ => {panic!("Unreachable");}}}
+                        Err(err_msg) => {Err(err_msg)},
+                   };
+
+                    if (std::mem::discriminant(&a_string) == std::mem::discriminant(&b_string) )
+                        && (std::mem::discriminant(&a_string) == std::mem::discriminant(&Ok("".to_string()))){
+                            let a_val = a_string.unwrap();
+                            let b_val  = b_string.unwrap();
+                            let new_string = format!("{}{}",b_val, a_val);
+                            self.stk.pop();
+                            self.stk.pop();
+                            self.stk.push(Value::VAL_OBJ(Rc::new(RefCell::new(LoxString::new(new_string)) )));
+                        } 
+                   else{
+                        // doing floating point compariso
+                       let a_float: Result<f64,String> = match self.peek_stack(0, std::mem::discriminant(&Value::VAL_NUMBER(0.0))){
+                            Ok(val) => { match val { Value::VAL_NUMBER(v) => Ok(v), _ => {panic!("Unreachable");}}}
+                            Err(err_msg) => {Err(err_msg)},
+                       };
+                       let b_float: Result<f64, String> = match self.peek_stack(1, std::mem::discriminant(&Value::VAL_NUMBER(0.0))){
+                            Ok(val) => { match val { Value::VAL_NUMBER(v) => Ok(v), _ => {panic!("Unreachable");}}}
+                            Err(err_msg) => {Err(err_msg)},
+                        };
+                        if std::mem::discriminant(&a_float) == std::mem::discriminant(&b_float) && 
+                            (std::mem::discriminant(&a_float) == std::mem::discriminant(&Ok(0.0))){
+                            // assuming you got here, you need to remove a and b from the stack first
+                            self.stk.pop();
+                            self.stk.pop();
+    
+                            self.stk.push(Value::VAL_NUMBER(a_float.unwrap()+b_float.unwrap()));
+                             
+                        } else {
+                            return InterpretResult::INTERPRET_RUNTIME_ERROR("Operands must be two numbers or two strings.".to_string());
+                        } 
+                    }                     
+               },
                OpCode::OP_SUBTRACT |
                OpCode::OP_DIVIDE |
                OpCode::OP_MULTIPLY => {
-                   let a: f64 = match self.peek_num(0){
-                        Ok(val) => {val},
-                        Err(err_msg) => {return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg);},
-                    };
-                   let b: f64 = match self.peek_num(1){
-                        Ok(val) => {val},
-                        Err(err_msg) => {return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg);},
-                   };
-                    // assuming you got here, you need to remove a and b from the stack first
-                    self.stk.pop();
-                    self.stk.pop();
-
-                    match opcode {
-                        OpCode::OP_ADD => self.stk.push(Value::VAL_NUMBER(a+b)),
-                        OpCode::OP_SUBTRACT => self.stk.push(Value::VAL_NUMBER(a-b)),
-                        OpCode::OP_MULTIPLY => self.stk.push(Value::VAL_NUMBER(a*b)),
-                        OpCode::OP_DIVIDE => self.stk.push(Value::VAL_NUMBER(a/b)),
-                        _ => return InterpretResult::INTERPRET_RUNTIME_ERROR("Something went horrible wrong when trying to do a binary operation".to_string())
-                    }
-               }
+                        // doing floating point compariso
+                       let a_float: Result<f64,String> = match self.peek_stack(0, std::mem::discriminant(&Value::VAL_NUMBER(0.0))){
+                            Ok(val) => { match val { Value::VAL_NUMBER(v) => Ok(v), _ => {panic!("Unreachable");}}}
+                            Err(err_msg) => {Err(err_msg)},
+                       };
+                       let b_float: Result<f64, String> = match self.peek_stack(1, std::mem::discriminant(&Value::VAL_NUMBER(0.0))){
+                            Ok(val) => { match val { Value::VAL_NUMBER(v) => Ok(v), _ => {panic!("Unreachable");}}}
+                            Err(err_msg) => {Err(err_msg)},
+                        };
+                        if std::mem::discriminant(&a_float) == std::mem::discriminant(&b_float) && 
+                            (std::mem::discriminant(&a_float) == std::mem::discriminant(&Ok(0.0))){
+                            // assuming you got here, you need to remove a and b from the stack first
+                            self.stk.pop();
+                            self.stk.pop();
+    
+                            let output = match opcode {
+                                OpCode::OP_SUBTRACT => a_float.unwrap()-b_float.unwrap(),
+                                OpCode::OP_MULTIPLY => a_float.unwrap()*b_float.unwrap(),
+                                OpCode::OP_DIVIDE => a_float.unwrap()/b_float.unwrap(),
+                                _ => return InterpretResult::INTERPRET_RUNTIME_ERROR("Something went horrible wrong when trying to do a binary operation".to_string())
+                            };
+                            self.stk.push(Value::VAL_NUMBER(output));     
+                        }
+                        else{ 
+                            return InterpretResult::INTERPRET_RUNTIME_ERROR("Operands must be two numbers or two strings.".to_string()); 
+                        }
+               },
                OpCode::OP_NOT => {
                    let val = self.stk.pop().unwrap();
                     self.stk.push(Value::VAL_BOOL(isFalsey(val)));
@@ -203,14 +262,15 @@ impl VM {
         return output;
     }
  
-    fn peek_num(&mut self,  index :usize) -> Result<f64, String> {
+    fn peek_stack(&mut self,  index :usize, expected: std::mem::Discriminant<Value>) -> Result<Value, String> {
         let b = match self.stk.peek(index){
             Some(v) => {
-                let out = match v{
-                    Value::VAL_NUMBER(num) => num,
-                    _ =>{return Err("Operands must be numbers.".to_string())}
-                };
-                out
+                // value matches expected value
+                if std::mem::discriminant(&v) == expected{
+                    v
+                } else {
+                    return Err(format!("stack at {} doesn't match expected: {:?}", index, &expected));
+                }
             },
             None => return Err("Stack is empty".to_string())
         };
