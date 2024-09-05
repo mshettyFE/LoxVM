@@ -7,6 +7,7 @@ pub mod stack;
 pub mod scanner;
 pub mod parser;
 pub mod object;
+pub mod table;
 
 extern crate num;
 #[macro_use]

@@ -5,6 +5,7 @@ use crate::{chunk::{Chunk, OpCode}, object::LoxString, parser::isFalsey, scanner
 use crate:: stack::LoxStack;
 use crate::value::*;
 use crate::parser::Parser;
+use crate::table::LoxTable;
 
 use core::fmt;
 
@@ -18,11 +19,12 @@ pub struct VM {
     chunk: Chunk, // currently executing chunk
     ip: usize, // index into code section of chunk denoting the next instruction to execute
     stk: LoxStack, // value stack 
+    table: LoxTable,               // interned strings
 }
 
 impl VM {
     pub fn new() -> Self{
-        return VM{chunk: Chunk::new(), ip: 0, stk: LoxStack::new()};
+        return VM{chunk: Chunk::new(), ip: 0, table: LoxTable::new(), stk: LoxStack::new()};
     }
     
     pub fn interpret(&mut self, source: &String) -> InterpretResult { 

@@ -12,8 +12,10 @@ pub trait Obj {
     fn print_obj(&self);
 }
 
+#[derive(Clone)]
 pub struct LoxString{
    pub val: String, 
+   pub hash: u64,
    ttype: ObjType
 }
 
@@ -33,6 +35,16 @@ impl Obj for LoxString{
 
 impl LoxString{
     pub fn new(new_val: String) -> LoxString{
-        LoxString{val: new_val, ttype: ObjType::OBJ_STRING}
+        let h = LoxString::gen_hash(new_val.clone());
+        LoxString{val: new_val, hash: h,ttype: ObjType::OBJ_STRING}
+    }
+
+    fn gen_hash(val: String) -> u64{
+        let mut hash: u64 = 2166136261;
+        for byte in val.as_bytes(){
+            hash ^= *byte as u64;
+            hash.wrapping_mul(16777619);
+        }
+        return hash;
     }
 }
