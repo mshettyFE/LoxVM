@@ -335,7 +335,7 @@ impl Scanner{
         return self.source.as_bytes().get(self.current);
     }
 
-    fn Match(&mut self, expected: char) -> bool {
+    pub fn Match(&mut self, expected: char) -> bool {
         // a combination of peek and advance which is conditional and doesn't return the consumed
         // character
         if self.isAtEnd() {return false;}

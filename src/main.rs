@@ -34,6 +34,7 @@ fn repl(){
                     InterpretResult::INTERPRET_COMPILE_ERROR(msg) => {println!("{}",msg); ()},
                     InterpretResult::INTERPRET_RUNTIME_ERROR(msg) => {println!("{}",msg); ()},
                 }
+                buffer = "".to_string();
            }
            Err(err_msg) => {
                eprintln!("{}", err_msg);

@@ -5,7 +5,7 @@ pub mod value;
 pub mod vm;
 pub mod stack;
 pub mod scanner;
-pub mod parser;
+pub mod compiler;
 pub mod object;
 pub mod table;
 

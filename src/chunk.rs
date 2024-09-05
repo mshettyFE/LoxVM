@@ -9,6 +9,7 @@ pub enum OpCode {
     OP_NIL,
     OP_TRUE,
     OP_FALSE,
+    OP_POP,
     OP_ADD,
     OP_EQUAL,
     OP_GREATER,
@@ -18,6 +19,7 @@ pub enum OpCode {
     OP_DIVIDE,
     OP_NOT,
     OP_NEGATE,
+    OP_PRINT,
     OP_RETURN,
 }
 
@@ -78,10 +80,12 @@ impl Chunk {
                 None => {print!("Unknown opcode at {}", offset); return Ok(offset+1);},
                 Some(instr) => {
                 let new_offset = match instr{ // dispatch to different output based on instr
+                    OpCode::OP_PRINT => self.simple_instruction("OP_PRINT".to_string(), offset)?,
                     OpCode::OP_RETURN => self.simple_instruction("OP_RETURN".to_string(), offset)?,
                     OpCode::OP_NIL => self.simple_instruction("OP_NIL".to_string(), offset)?,
                     OpCode::OP_TRUE => self.simple_instruction("OP_TRUE".to_string(), offset)?,
                     OpCode::OP_FALSE => self.simple_instruction("OP_FALSE".to_string(), offset)?,
+                    OpCode::OP_POP => self.simple_instruction("OP_POP".to_string(), offset)?,
                     OpCode::OP_EQUAL => self.simple_instruction("OP_EQUAL".to_string(), offset)?,
                     OpCode::OP_GREATER => self.simple_instruction("OP_GREATER".to_string(), offset)?,
                     OpCode::OP_LESS => self.simple_instruction("OP_LESS".to_string(), offset)?,

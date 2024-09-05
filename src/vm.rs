@@ -1,10 +1,10 @@
 #![allow(non_camel_case_types)]
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::{chunk::{Chunk, OpCode}, object::LoxString, parser::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
+use crate::{chunk::{Chunk, OpCode}, object::LoxString, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use crate:: stack::LoxStack;
 use crate::value::*;
-use crate::parser::Parser;
+use crate::compiler::Compiler;
 use crate::table::LoxTable;
 
 use core::fmt;
@@ -19,20 +19,20 @@ pub struct VM {
     chunk: Chunk, // currently executing chunk
     ip: usize, // index into code section of chunk denoting the next instruction to execute
     stk: LoxStack, // value stack 
-    table: LoxTable,               // interned strings
+    interns: LoxTable,               // interned strings
 }
 
 impl VM {
     pub fn new() -> Self{
-        return VM{chunk: Chunk::new(), ip: 0, table: LoxTable::new(), stk: LoxStack::new()};
+        return VM{chunk: Chunk::new(), ip: 0, interns: LoxTable::new(), stk: LoxStack::new()};
     }
     
     pub fn interpret(&mut self, source: &String) -> InterpretResult { 
         let mut scanner = Scanner::new(source.to_string());
         let mut cnk = Chunk::new();
-        let mut parser = Parser::new(&mut cnk);
+        let mut parser = Compiler::new(&mut cnk);
         // compile() returns false if an error occurred.
-        if !parser.compile(&mut scanner){
+        if !parser.compile(&mut scanner, self){
             return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string());
         }
         self.chunk = cnk;
@@ -65,7 +65,7 @@ impl VM {
                 None => return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Invalid conversion  to OpCode attempted: {}", instruction_number)),       
             };
             match opcode { //finally, dispatch to the correct opcode
-                OpCode::OP_RETURN => {
+                OpCode::OP_PRINT => {
                     match self.stk.pop(){
                         Some(v) => {
                             v.print_value();
@@ -73,7 +73,9 @@ impl VM {
                         }
                         None => {return InterpretResult::INTERPRET_RUNTIME_ERROR("Stack is empty".to_string())}
                      }
-                    return InterpretResult::INTERPRET_OK
+                 }
+                OpCode::OP_RETURN => {
+                   return InterpretResult::INTERPRET_OK
                 },
                 OpCode::OP_CONSTANT => {
                     let constant_index = match self.read_byte(){
@@ -94,6 +96,9 @@ impl VM {
                }
                OpCode::OP_FALSE => {
                     self.stk.push(Value::VAL_BOOL(false))
+               }
+               OpCode::OP_POP => {
+                    self.stk.pop();
                }
                OpCode::OP_EQUAL => {
                    let a = match self.stk.peek(0){
