@@ -51,7 +51,6 @@ impl VM {
                  Some(val) => {
                      if *val {
                         self.stk.print();
-                        self.globals.print();
                          _ = self.chunk.disassemble_instruction(self.ip);
                      }
                  }
@@ -153,6 +152,27 @@ impl VM {
 
                     } 
                     self.stk.pop();
+               }
+               OpCode::OP_SET_GLOBAL => {
+                    let constant_index = match self.read_byte(){
+                        Ok(val) => val,
+                        Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
+                    };
+                    let name = match self.chunk.get_constant(usize::from(constant_index)){
+                        Some(val) => val,
+                        None => return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Couldn't access constant at address {}", constant_index))
+                    };
+                    match name {
+                        Value::VAL_OBJ(pointer_stuff) => {
+                               let ptr = pointer_stuff.borrow();
+                               let key = ptr.any().downcast_ref::<LoxString>().unwrap();
+                               let value = self.stk.peek(0).unwrap();
+                               if self.globals.insert(key.clone(), value).is_none(){
+                                    return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Undefined variable {}.", key.val))
+                               }
+                        },
+                        _ => { return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Tried accessing a global"))}
+                    } 
                }
                OpCode::OP_EQUAL => {
                    let a = match self.stk.peek(0){

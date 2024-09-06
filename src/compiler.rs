@@ -35,7 +35,7 @@ pub enum ErrorTokenLoc{
     CURRENT
 }
 
-#[derive(Copy, Clone, FromPrimitive, Debug)]
+#[derive(Copy, Clone,PartialEq, PartialOrd, FromPrimitive, Debug)]
 pub enum Precedence {
  PREC_NONE,
  PREC_ASSIGNMENT, // =
@@ -82,8 +82,8 @@ impl Precedence{
 // relatively easily (after the upfront cost of updating the rules table
 #[derive(Debug)]
 pub struct ParseRule<'a,'b>{
-    prefix: Option<fn(&mut Compiler<'a,'b>, &mut Scanner, &mut VM)>,
-    infix: Option<fn(&mut Compiler<'a,'b>, &mut Scanner, &mut VM )>,
+    prefix: Option<fn(&mut Compiler<'a,'b>, &mut Scanner, &mut VM, bool)>,
+    infix: Option<fn(&mut Compiler<'a,'b>, &mut Scanner, &mut VM, bool )>,
     precedence: Precedence,
 }
 
@@ -260,13 +260,13 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         self.parsePrecedence(Precedence::PREC_ASSIGNMENT, scanner, vm);
     }
 
-    fn grouping(&mut self, scanner: &mut Scanner, vm: &mut VM){
+    fn grouping(&mut self, scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
         // do a bunch of expression wrapped in parentheses
         self.expression(scanner, vm);
         self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expected ')' after expression".to_string(), scanner, vm);
     } 
 
-    fn unary(&mut self, scanner: &mut Scanner, vm: &mut VM){
+    fn unary(&mut self, scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
         // once you you hit a unary, you need to process the the following expression while
         // respecting precedence
         let operatorType = self.previous.ttype.clone();
@@ -279,7 +279,7 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         }
     }
     
-    fn binary(&mut self, scanner: &mut Scanner, vm: &mut VM){
+    fn binary(&mut self, scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
         let operatorType = self.previous.ttype.clone();
         let rule = self.getRule(operatorType);
         self.parsePrecedence(rule.unwrap().precedence.decrease_prec().unwrap(), scanner, vm);
@@ -298,13 +298,13 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         }
     }
     
-    fn number(&mut self, _scanner: &mut Scanner, vm: &mut VM){
+    fn number(&mut self, _scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
         // cast the previous token's string into a double and add said constant to chunk
         let value: f64 = self.previous.start.parse().unwrap(); 
         self.emitConstant(Value::VAL_NUMBER(value));
     }
 
-    fn literal(&mut self, _scanner: &mut Scanner, vm: &mut VM){
+    fn literal(&mut self, _scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
         match self.previous.ttype {
             TokenType::TOKEN_FALSE => {self.emitByte(OpCode::OP_FALSE as u8); ()},
             TokenType::TOKEN_TRUE => {self.emitByte(OpCode::OP_TRUE as u8); ()},
@@ -313,7 +313,7 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         } 
     }
 
-    fn string(&mut self, _scanner: &mut Scanner, vm: &mut VM){
+    fn string(&mut self, _scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
         let quoted = self.previous.start.clone();
         let len = quoted.len();
         // trim of quotes
@@ -323,26 +323,33 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         self.emitConstant(data); 
     }
 
-    fn variable(&mut self, scanner: &mut Scanner, vm: &mut VM){
-        self.namedVariable(self.previous.clone());
+    fn variable(&mut self, scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
+        self.namedVariable(self.previous.clone(), scanner, vm, canAssign);
     }
 
-    fn namedVariable(&mut  self, name: Token){
+    fn namedVariable(&mut  self, name: Token, scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
         let arg = self.identifierConstant(name);
+        if self.Match(scanner, vm, TokenType::TOKEN_EQUAL) && canAssign{
+            self.expression(scanner, vm);
+            self.emitTwoBytes(OpCode::OP_SET_GLOBAL as u8, arg);
+        }
         self.emitTwoBytes(OpCode::OP_GET_GLOBAL as u8, arg);
-
     }
     
 // the function that handles precedence and allows recursion to occur
     fn parsePrecedence(&mut self, init_precedence: Precedence, scanner: &mut Scanner, vm: &mut VM){
         self.advance(scanner, vm);
+        let canAssign: bool;
         // Check if a prefix operation needs to be performed
         let get_prefix: Option<ParseRule> = self.getRule(self.previous.ttype.clone());
         match get_prefix {
             Some(val) => {
                 match val.prefix{
                     // after unwrapping everything, execute the prefix function
-                    Some(prefix_func) => prefix_func(self, scanner, vm),
+                    Some(prefix_func) => {
+                        canAssign = init_precedence <= Precedence::PREC_ASSIGNMENT;
+                        prefix_func(self, scanner, vm, canAssign);
+                    },
                     None => {
                         self.errorAt("Expect expression".to_string(), ErrorTokenLoc::PREVIOUS);
                         return ;
@@ -383,11 +390,15 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
             };
 
             match prev_rule.infix {
-                Some(function) => function(self, scanner, vm),
+                Some(function) => function(self, scanner, vm, canAssign),
                 None => {
                     self.errorAt("Invalid infix rule".to_string(), ErrorTokenLoc::PREVIOUS);
                     return;
                 }
+            }
+            if canAssign && self.Match(scanner, vm, TokenType::TOKEN_EQUAL){
+                self.errorAt("Invalid assignment target".to_string(), ErrorTokenLoc::PREVIOUS);
+                return;
             }
         }
     }
