@@ -14,7 +14,7 @@ pub enum Value {
 }
 
 impl std::fmt::Debug for Value{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
        self.print_value();
        Ok(()) 
     }

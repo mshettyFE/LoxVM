@@ -1,7 +1,7 @@
 #![allow(non_camel_case_types)]
 use std::rc::Rc;
 use std::cell::RefCell;
-use crate::object::{LoxString, Obj};
+use crate::object::LoxString;
 use crate::scanner::{Token, TokenType, Scanner};
 use crate::chunk::{Chunk, OpCode};
 use crate::value::Value;
@@ -162,7 +162,7 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         return !self.hadError;
     }
 
-    fn advance(&mut self, scanner: &mut Scanner, vm: &mut VM){
+    fn advance(&mut self, scanner: &mut Scanner, _vm: &mut VM){
         // save current token (to be able to later access the lexeme), and then ask the scanner for
         // a new token
         //
@@ -225,7 +225,7 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         let global = self.
             parseVariable(
                 "Expect variable name".to_string(), scanner, vm);
-        if (self.Match(scanner, vm, TokenType::TOKEN_EQUAL)){
+        if self.Match(scanner, vm, TokenType::TOKEN_EQUAL) {
             self.expression(scanner, vm);
         } else {
             self.emitByte(OpCode::OP_NIL as u8);
@@ -260,13 +260,13 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         self.parsePrecedence(Precedence::PREC_ASSIGNMENT, scanner, vm);
     }
 
-    fn grouping(&mut self, scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
+    fn grouping(&mut self, scanner: &mut Scanner, vm: &mut VM, _canAssign: bool){
         // do a bunch of expression wrapped in parentheses
         self.expression(scanner, vm);
         self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expected ')' after expression".to_string(), scanner, vm);
     } 
 
-    fn unary(&mut self, scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
+    fn unary(&mut self, scanner: &mut Scanner, vm: &mut VM, _canAssign: bool){
         // once you you hit a unary, you need to process the the following expression while
         // respecting precedence
         let operatorType = self.previous.ttype.clone();
@@ -279,7 +279,7 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         }
     }
     
-    fn binary(&mut self, scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
+    fn binary(&mut self, scanner: &mut Scanner, vm: &mut VM, _canAssign: bool){
         let operatorType = self.previous.ttype.clone();
         let rule = self.getRule(operatorType);
         self.parsePrecedence(rule.unwrap().precedence.decrease_prec().unwrap(), scanner, vm);
@@ -298,13 +298,13 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         }
     }
     
-    fn number(&mut self, _scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
+    fn number(&mut self, _scanner: &mut Scanner, _vm: &mut VM, _canAssign: bool){
         // cast the previous token's string into a double and add said constant to chunk
         let value: f64 = self.previous.start.parse().unwrap(); 
         self.emitConstant(Value::VAL_NUMBER(value));
     }
 
-    fn literal(&mut self, _scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
+    fn literal(&mut self, _scanner: &mut Scanner, _vm: &mut VM, _canAssign: bool){
         match self.previous.ttype {
             TokenType::TOKEN_FALSE => {self.emitByte(OpCode::OP_FALSE as u8); ()},
             TokenType::TOKEN_TRUE => {self.emitByte(OpCode::OP_TRUE as u8); ()},
@@ -313,7 +313,7 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         } 
     }
 
-    fn string(&mut self, _scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
+    fn string(&mut self, _scanner: &mut Scanner, _vm: &mut VM, _canAssign: bool){
         let quoted = self.previous.start.clone();
         let len = quoted.len();
         // trim of quotes

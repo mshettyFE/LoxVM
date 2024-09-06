@@ -3,9 +3,9 @@
 // This is because we don't need a general hash map, and there are some
 // intricacies when doing == which prevent me from just using the bare implementation
 
-use std::{collections::{hash_map, HashMap}, hash::Hash};
+use std::{collections::HashMap};
 
-use crate::{object::{LoxString, ObjType}, value::Value};
+use crate::{object::LoxString, value::Value};
 
 pub struct LoxTable {
     hash_map: HashMap<u64, Value>,

@@ -19,13 +19,12 @@ pub struct VM {
     chunk: Chunk, // currently executing chunk
     ip: usize, // index into code section of chunk denoting the next instruction to execute
     stk: LoxStack, // value stack 
-    interns: LoxTable,               // interned strings
     globals: LoxTable,                                    // global vars
 }
 
 impl VM {
     pub fn new() -> Self{
-        return VM{chunk: Chunk::new(), ip: 0, interns: LoxTable::new(),
+        return VM{chunk: Chunk::new(), ip: 0, 
         globals: LoxTable::new(),
         stk: LoxStack::new()};
     }

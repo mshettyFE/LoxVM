@@ -1,4 +1,4 @@
-use crate::value::Value;
+#![allow(non_camel_case_types)]
 use std::any::Any;
 
 #[derive(Clone, PartialEq, Debug)]
