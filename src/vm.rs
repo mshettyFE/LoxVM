@@ -1,5 +1,5 @@
 #![allow(non_camel_case_types)]
-use std::cell::RefCell;
+use std::{cell::RefCell};
 use std::rc::Rc;
 use crate::{chunk::{Chunk, OpCode}, object::LoxString, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use crate:: stack::LoxStack;
@@ -20,11 +20,14 @@ pub struct VM {
     ip: usize, // index into code section of chunk denoting the next instruction to execute
     stk: LoxStack, // value stack 
     interns: LoxTable,               // interned strings
+    globals: LoxTable,                                    // global vars
 }
 
 impl VM {
     pub fn new() -> Self{
-        return VM{chunk: Chunk::new(), ip: 0, interns: LoxTable::new(), stk: LoxStack::new()};
+        return VM{chunk: Chunk::new(), ip: 0, interns: LoxTable::new(),
+        globals: LoxTable::new(),
+        stk: LoxStack::new()};
     }
     
     pub fn interpret(&mut self, source: &String) -> InterpretResult { 
@@ -48,6 +51,7 @@ impl VM {
                  Some(val) => {
                      if *val {
                         self.stk.print();
+                        self.globals.print();
                          _ = self.chunk.disassemble_instruction(self.ip);
                      }
                  }
@@ -98,6 +102,56 @@ impl VM {
                     self.stk.push(Value::VAL_BOOL(false))
                }
                OpCode::OP_POP => {
+                    self.stk.pop();
+               }
+               OpCode::OP_GET_GLOBAL => {
+                    let constant_index = match self.read_byte(){
+                        Ok(val) => val,
+                        Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
+                    };
+                    let name = match self.chunk.get_constant(usize::from(constant_index)){
+                        Some(val) => val,
+                        None => return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Couldn't access constant at address {}", constant_index))
+                    }; 
+                    let key: LoxString;
+                    match name {
+                        Value::VAL_OBJ(pointer_stuff) => {
+                            let ptr = pointer_stuff.borrow();
+                            key = ptr.any().downcast_ref::<LoxString>().unwrap().clone();
+                        }
+                        _ => {
+                            return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Should have gotten a LoxString..."));
+                        }
+                    }
+                    let wrapped_val = self.globals.find(key.clone());
+                    match wrapped_val {
+                        Some(value) => {
+                            self.stk.push(value);
+                        }
+                        None => {
+                            return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Undefined variable {}.",key.val.clone()));
+                        }
+                     }
+               }
+               OpCode::OP_DEFINE_GLOBAL => {
+                    let constant_index = match self.read_byte(){
+                        Ok(val) => val,
+                        Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
+                    };
+                    let name = match self.chunk.get_constant(usize::from(constant_index)){
+                        Some(val) => val,
+                        None => return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Couldn't access constant at address {}", constant_index))
+                    };
+                    match name {
+                        Value::VAL_OBJ(pointer_stuff) => {
+                               let ptr = pointer_stuff.borrow();
+                               let key = ptr.any().downcast_ref::<LoxString>().unwrap();
+                               let value = self.stk.peek(0).unwrap();
+                               self.globals.insert(key.clone(), value);
+                        },
+                        _ => { return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Tried accessing a global"))}
+
+                    } 
                     self.stk.pop();
                }
                OpCode::OP_EQUAL => {

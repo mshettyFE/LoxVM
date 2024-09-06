@@ -13,6 +13,13 @@ pub enum Value {
     VAL_OBJ(Rc<RefCell<dyn Obj>>),
 }
 
+impl std::fmt::Debug for Value{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+       self.print_value();
+       Ok(()) 
+    }
+}
+
 impl Value {
     pub fn print_value(&self){
         match self{

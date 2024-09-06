@@ -1,7 +1,7 @@
 use crate::value::Value;
 use std::any::Any;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum ObjType{
     OBJ_STRING,
 }
@@ -12,7 +12,7 @@ pub trait Obj {
     fn print_obj(&self);
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LoxString{
    pub val: String, 
    pub hash: u64,
@@ -43,7 +43,7 @@ impl LoxString{
         let mut hash: u64 = 2166136261;
         for byte in val.as_bytes(){
             hash ^= *byte as u64;
-            hash.wrapping_mul(16777619);
+            hash = hash.wrapping_mul(16777619);
         }
         return hash;
     }

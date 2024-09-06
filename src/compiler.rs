@@ -115,7 +115,7 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
  rules[TokenType::TOKEN_GREATER_EQUAL as usize] = ParseRule{prefix: None, infix: Some(Compiler::binary), precedence:  Precedence::PREC_COMPARISON};
  rules[TokenType::TOKEN_LESS as usize] = ParseRule{prefix: None, infix: Some(Compiler::binary), precedence: Precedence::PREC_COMPARISON};
  rules[TokenType::TOKEN_LESS_EQUAL as usize] = ParseRule{prefix: None, infix: Some(Compiler::binary), precedence: Precedence::PREC_COMPARISON};
- rules[TokenType::TOKEN_IDENTIFIER as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_IDENTIFIER as usize] = ParseRule{prefix: Some(Compiler::variable), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_STRING as usize] = ParseRule{prefix: Some(Compiler::string), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_NUMBER as usize] = ParseRule{prefix: Some(Compiler::number), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_AND as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
@@ -211,10 +211,27 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
 // see https://craftinginterpreters.com/image/compiling-expressions/connections.png
 
     fn declaration(&mut self, scanner: &mut Scanner, vm: &mut VM){
-        self.statement(scanner, vm);
+        if self.Match(scanner, vm, TokenType::TOKEN_VAR){
+            self.varDeclaration(scanner, vm);
+        } else {
+            self.statement(scanner, vm); 
+        }
         if self.panicMode {
             self.synchronize(scanner, vm);
         }
+    }
+
+    fn varDeclaration(&mut self, scanner: &mut Scanner, vm: &mut VM){
+        let global = self.
+            parseVariable(
+                "Expect variable name".to_string(), scanner, vm);
+        if (self.Match(scanner, vm, TokenType::TOKEN_EQUAL)){
+            self.expression(scanner, vm);
+        } else {
+            self.emitByte(OpCode::OP_NIL as u8);
+        }
+        self.consume(TokenType::TOKEN_SEMICOLON, "Expect ';' after variable declaration.".to_string(), scanner, vm);
+        self.defineVariable(global);
     }
     
     fn statement(&mut self, scanner: &mut Scanner, vm: &mut VM){
@@ -306,6 +323,16 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         self.emitConstant(data); 
     }
 
+    fn variable(&mut self, scanner: &mut Scanner, vm: &mut VM){
+        self.namedVariable(self.previous.clone());
+    }
+
+    fn namedVariable(&mut  self, name: Token){
+        let arg = self.identifierConstant(name);
+        self.emitTwoBytes(OpCode::OP_GET_GLOBAL as u8, arg);
+
+    }
+    
 // the function that handles precedence and allows recursion to occur
     fn parsePrecedence(&mut self, init_precedence: Precedence, scanner: &mut Scanner, vm: &mut VM){
         self.advance(scanner, vm);
@@ -363,6 +390,21 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
                 }
             }
         }
+    }
+
+    fn parseVariable(&mut self, err_msg: String, scanner: &mut Scanner, vm: &mut VM) -> u8{
+        self.consume(TokenType::TOKEN_IDENTIFIER, err_msg, scanner, vm); 
+        return self.identifierConstant(self.previous.clone())
+    }
+
+    fn defineVariable(&mut self, global: u8){
+        self.emitTwoBytes(OpCode::OP_DEFINE_GLOBAL as u8, global);
+    }
+
+    fn identifierConstant(&mut self, name: Token) -> u8{
+        let str = LoxString::new(name.start);
+        let val = Value::VAL_OBJ(Rc::new( RefCell::new(str)));
+        self.makeConstant(val)
     }
 
     fn getRule(&mut self, ttype: TokenType)  -> Option<ParseRule<'a,'b>>{
