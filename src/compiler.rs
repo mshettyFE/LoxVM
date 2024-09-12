@@ -11,10 +11,46 @@ use std::mem;
 
 const TOTAL_RULES: usize = 40;
 
+pub struct Compiler {
+    locals: Vec<Locals>,
+    localCount: u64,
+    scopeDepth: u64
+}
+
+impl Compiler {
+    pub fn new() -> Self{
+        Compiler{locals: Vec::new(), localCount: 0, scopeDepth: 0}
+    }
+
+    pub fn beginScope(&mut self){
+        self.scopeDepth += 1;
+    }
+    
+    pub fn endScope(&mut self){
+        self.scopeDepth -= 1;
+    }
+    
+    fn markInitialized(& mut self) {
+        self.locals.get_mut((self.localCount) as usize -1).unwrap().depth = 
+            Some(self.scopeDepth);
+    }
+}
+
+pub struct Locals {
+    pub name: Token,
+    pub depth: Option<u64>,
+}
+
+impl Locals {
+    pub fn new(new_name: Token, new_depth: Option<u64>) -> Self{
+        Locals{name: new_name, depth: new_depth}
+    }
+}
+
 // the beating heart of the interpreter
 // requests tokens as needed from a scanner, then converts them too bytecode
 // It's basically as single pass compiler
-pub struct Compiler <'a,'b>{
+pub struct Parser <'a,'b>{
     compiling_chunk: &'a mut Chunk, // current chunk being executed. Could represent a function, or
                                     // a group of statements
     // the tokens under consideration
@@ -82,12 +118,12 @@ impl Precedence{
 // relatively easily (after the upfront cost of updating the rules table
 #[derive(Debug)]
 pub struct ParseRule<'a,'b>{
-    prefix: Option<fn(&mut Compiler<'a,'b>, &mut Scanner, &mut VM, bool)>,
-    infix: Option<fn(&mut Compiler<'a,'b>, &mut Scanner, &mut VM, bool )>,
+    prefix: Option<fn(&mut Parser<'a,'b>, &mut Scanner, &mut VM,&mut Compiler,  bool)>,
+    infix: Option<fn(&mut Parser<'a,'b>, &mut Scanner, &mut VM,&mut Compiler, bool )>,
     precedence: Precedence,
 }
 
-impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
+impl <'a,'b> Parser<'a,'b> where 'a: 'b{
   pub fn new (chnk: &'a mut Chunk) -> Self{
     let empty_rule: ParseRule = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
     let rules = &mut [empty_rule; TOTAL_RULES];
@@ -96,48 +132,48 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
  //    rules[TokenType:: as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  
  // God this is ugly
- rules[TokenType::TOKEN_LEFT_PAREN as usize] = ParseRule{prefix: Some(Compiler::grouping), infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_LEFT_PAREN as usize] = ParseRule{prefix: Some(Parser::grouping), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_RIGHT_PAREN as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_LEFT_BRACE as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_RIGHT_BRACE as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_COMMA as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_DOT as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_MINUS as usize] = ParseRule{prefix: Some(Compiler::unary), infix: Some(Compiler::binary), precedence: Precedence::PREC_TERM};
- rules[TokenType::TOKEN_PLUS as usize] = ParseRule{prefix: None, infix: Some(Compiler::binary), precedence: Precedence::PREC_TERM};
+ rules[TokenType::TOKEN_MINUS as usize] = ParseRule{prefix: Some(Parser::unary), infix: Some(Parser::binary), precedence: Precedence::PREC_TERM};
+ rules[TokenType::TOKEN_PLUS as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_TERM};
  rules[TokenType::TOKEN_SEMICOLON as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_SLASH as usize] = ParseRule{prefix: None, infix: Some(Compiler::binary), precedence: Precedence::PREC_FACTOR};
- rules[TokenType::TOKEN_STAR as usize] = ParseRule{prefix: None, infix: Some(Compiler::binary), precedence: Precedence::PREC_FACTOR};
- rules[TokenType::TOKEN_BANG as usize] = ParseRule{prefix: Some(Compiler::unary), infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_BANG_EQUAL as usize] = ParseRule{prefix: None, infix: Some(Compiler::binary), precedence: Precedence::PREC_EQUALITY};
+ rules[TokenType::TOKEN_SLASH as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_FACTOR};
+ rules[TokenType::TOKEN_STAR as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_FACTOR};
+ rules[TokenType::TOKEN_BANG as usize] = ParseRule{prefix: Some(Parser::unary), infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_BANG_EQUAL as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_EQUALITY};
  rules[TokenType::TOKEN_EQUAL as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_EQUAL_EQUAL as usize] = ParseRule{prefix: None, infix: Some(Compiler::binary), precedence: Precedence::PREC_EQUALITY};
- rules[TokenType::TOKEN_GREATER as usize] = ParseRule{prefix: None, infix: Some(Compiler::binary), precedence: Precedence::PREC_COMPARISON};
- rules[TokenType::TOKEN_GREATER_EQUAL as usize] = ParseRule{prefix: None, infix: Some(Compiler::binary), precedence:  Precedence::PREC_COMPARISON};
- rules[TokenType::TOKEN_LESS as usize] = ParseRule{prefix: None, infix: Some(Compiler::binary), precedence: Precedence::PREC_COMPARISON};
- rules[TokenType::TOKEN_LESS_EQUAL as usize] = ParseRule{prefix: None, infix: Some(Compiler::binary), precedence: Precedence::PREC_COMPARISON};
- rules[TokenType::TOKEN_IDENTIFIER as usize] = ParseRule{prefix: Some(Compiler::variable), infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_STRING as usize] = ParseRule{prefix: Some(Compiler::string), infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_NUMBER as usize] = ParseRule{prefix: Some(Compiler::number), infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_EQUAL_EQUAL as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_EQUALITY};
+ rules[TokenType::TOKEN_GREATER as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_COMPARISON};
+ rules[TokenType::TOKEN_GREATER_EQUAL as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence:  Precedence::PREC_COMPARISON};
+ rules[TokenType::TOKEN_LESS as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_COMPARISON};
+ rules[TokenType::TOKEN_LESS_EQUAL as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_COMPARISON};
+ rules[TokenType::TOKEN_IDENTIFIER as usize] = ParseRule{prefix: Some(Parser::variable), infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_STRING as usize] = ParseRule{prefix: Some(Parser::string), infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_NUMBER as usize] = ParseRule{prefix: Some(Parser::number), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_AND as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_CLASS as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_ELSE as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_FALSE as usize] = ParseRule{prefix: Some(Compiler::literal), infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_FALSE as usize] = ParseRule{prefix: Some(Parser::literal), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_FOR as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_FUN as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_IF as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_NIL as usize] = ParseRule{prefix: Some(Compiler::literal), infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_NIL as usize] = ParseRule{prefix: Some(Parser::literal), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_OR as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_PRINT as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_RETURN as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_SUPER as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_THIS as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_TRUE as usize] = ParseRule{prefix: Some(Compiler::literal), infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_TRUE as usize] = ParseRule{prefix: Some(Parser::literal), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_VAR as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_WHILE as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_ERROR as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_EOF as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
     
- Compiler{compiling_chunk: chnk, 
+ Parser{compiling_chunk: chnk, 
         previous: Token {ttype: TokenType::TOKEN_ERROR, start: "".to_string(), line: 0 },
         current: Token { ttype: TokenType::TOKEN_ERROR, start: "".to_string(), line: 0 },
         hadError: false,
@@ -145,7 +181,7 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         rule_table: *rules,
     }
   }
-    pub fn compile(&mut self, scanner: &mut Scanner, vm: &mut VM) -> bool{
+    pub fn compile(&mut self, scanner: &mut Scanner, compiler: &mut Compiler, vm: &mut VM) -> bool{
         // interface of parser. Give it a scanner, and it will chew through the tokens, spitting
         // out byte code
         // returns false if an error has occurred
@@ -154,11 +190,11 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
            if self.Match(scanner,vm, TokenType::TOKEN_EOF){
                 break;
            } 
-           self.declaration(scanner, vm);
+           self.declaration(scanner, vm, compiler);
         }
         // last token needs to be EOF, otherwise, we have problems
         self.consume(TokenType::TOKEN_EOF, "Expected end of expression.".to_string(), scanner, vm);
-        self.endCompiler();
+        self.endParser();
         return !self.hadError;
     }
 
@@ -185,7 +221,7 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         self.advance(scanner, vm);
         return true;
     }
-    
+   
     fn consume(&mut self, wanted_token: TokenType, err_msg: String, scanner: &mut Scanner, vm: &mut VM){
         if self.current.ttype == wanted_token {
             self.advance(scanner, vm);
@@ -193,10 +229,8 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         }
         self.errorAt(err_msg, ErrorTokenLoc::CURRENT);
     }
-
-
-    
-    fn endCompiler(&mut self){
+ 
+    fn endParser(&mut self){
         // tops of chunk with return, and then disassembles if prompted
         self.emitReturn();
         if *DEBUG_PRINT_CODE.get().unwrap(){
@@ -210,67 +244,82 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
 // grammar production functions
 // see https://craftinginterpreters.com/image/compiling-expressions/connections.png
 
-    fn declaration(&mut self, scanner: &mut Scanner, vm: &mut VM){
+    fn declaration(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
         if self.Match(scanner, vm, TokenType::TOKEN_VAR){
-            self.varDeclaration(scanner, vm);
+            self.varDeclaration(scanner, vm, compiler);
         } else {
-            self.statement(scanner, vm); 
+            self.statement(scanner, vm, compiler); 
         }
         if self.panicMode {
             self.synchronize(scanner, vm);
         }
     }
 
-    fn varDeclaration(&mut self, scanner: &mut Scanner, vm: &mut VM){
-        let global = self.
-            parseVariable(
-                "Expect variable name".to_string(), scanner, vm);
+    fn varDeclaration(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
+        let global = self.parseVariable("Expect variable name".to_string(), scanner, vm, compiler);
         if self.Match(scanner, vm, TokenType::TOKEN_EQUAL) {
-            self.expression(scanner, vm);
+            self.expression(scanner, vm, compiler);
         } else {
             self.emitByte(OpCode::OP_NIL as u8);
         }
         self.consume(TokenType::TOKEN_SEMICOLON, "Expect ';' after variable declaration.".to_string(), scanner, vm);
-        self.defineVariable(global);
+        self.defineVariable(global, compiler);
     }
     
-    fn statement(&mut self, scanner: &mut Scanner, vm: &mut VM){
+    fn statement(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
         if self.Match(scanner, vm, TokenType::TOKEN_PRINT){
-            self.printStatement(scanner, vm); 
-        } else {
-            self.expressionStatement(scanner, vm);
+            self.printStatement(scanner, vm, compiler); 
+        } else if self.Match(scanner, vm, TokenType::TOKEN_LEFT_BRACE){
+            compiler.beginScope();
+            self.block(scanner, vm, compiler);
+            compiler.endScope();
+            loop {
+                if compiler.localCount == 0 {
+                    break;
+                }
+                let var_depth = compiler.locals.get( (compiler.localCount-1) as usize ).unwrap().depth;
+                if var_depth.unwrap() > compiler.scopeDepth {
+                    self.emitByte(OpCode::OP_POP as u8);
+                    compiler.localCount -= 1;
+                    continue;
+                }
+                break;
+            }
+        }
+        else {
+            self.expressionStatement(scanner, vm, compiler);
         }
     }
 
-    fn printStatement(&mut self, scanner: &mut Scanner, vm: &mut VM){
-        self.expression(scanner, vm);
+    fn printStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
+        self.expression(scanner, vm, compiler);
         self.consume(TokenType::TOKEN_SEMICOLON, "Expect ; after value.".to_string(), scanner, vm);
         self.emitByte(OpCode::OP_PRINT as u8);
 
     }
 
-    fn expressionStatement(&mut self, scanner: &mut Scanner, vm: &mut VM){
-        self.expression(scanner, vm);
+    fn expressionStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
+        self.expression(scanner, vm, compiler);
         self.consume(TokenType::TOKEN_SEMICOLON, "Expect ; after value.".to_string(), scanner, vm);
         self.emitByte(OpCode::OP_POP as u8);
     }
 
-    fn expression(&mut self, scanner: &mut Scanner, vm: &mut VM) {
+    fn expression(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler) {
         // interpret an expression
-        self.parsePrecedence(Precedence::PREC_ASSIGNMENT, scanner, vm);
+        self.parsePrecedence(Precedence::PREC_ASSIGNMENT, scanner, compiler,vm);
     }
 
-    fn grouping(&mut self, scanner: &mut Scanner, vm: &mut VM, _canAssign: bool){
+    fn grouping(&mut self, scanner: &mut Scanner, vm: &mut VM, comp: &mut Compiler, _canAssign: bool){
         // do a bunch of expression wrapped in parentheses
-        self.expression(scanner, vm);
+        self.expression(scanner, vm, comp);
         self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expected ')' after expression".to_string(), scanner, vm);
     } 
 
-    fn unary(&mut self, scanner: &mut Scanner, vm: &mut VM, _canAssign: bool){
+    fn unary(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler, _canAssign: bool){
         // once you you hit a unary, you need to process the the following expression while
         // respecting precedence
         let operatorType = self.previous.ttype.clone();
-        self.parsePrecedence(Precedence::PREC_UNARY, scanner, vm);
+        self.parsePrecedence(Precedence::PREC_UNARY, scanner, compiler,vm);
         // after the fact, you apply the unary
         match operatorType {
             TokenType::TOKEN_BANG => {self.emitByte(OpCode::OP_NOT as u8); () },
@@ -279,10 +328,10 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         }
     }
     
-    fn binary(&mut self, scanner: &mut Scanner, vm: &mut VM, _canAssign: bool){
+    fn binary(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler, _canAssign: bool){
         let operatorType = self.previous.ttype.clone();
         let rule = self.getRule(operatorType);
-        self.parsePrecedence(rule.unwrap().precedence.decrease_prec().unwrap(), scanner, vm);
+        self.parsePrecedence(rule.unwrap().precedence.decrease_prec().unwrap(), scanner, compiler,vm);
         match operatorType {
             TokenType::TOKEN_BANG_EQUAL => {self.emitTwoBytes(OpCode::OP_EQUAL as u8, OpCode::OP_NOT as u8); ()},
             TokenType::TOKEN_EQUAL_EQUAL => {self.emitByte(OpCode::OP_EQUAL as u8); ()},
@@ -298,13 +347,13 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         }
     }
     
-    fn number(&mut self, _scanner: &mut Scanner, _vm: &mut VM, _canAssign: bool){
+    fn number(&mut self, _scanner: &mut Scanner, _vm: &mut VM, compiler: &mut Compiler, _canAssign: bool){
         // cast the previous token's string into a double and add said constant to chunk
         let value: f64 = self.previous.start.parse().unwrap(); 
         self.emitConstant(Value::VAL_NUMBER(value));
     }
 
-    fn literal(&mut self, _scanner: &mut Scanner, _vm: &mut VM, _canAssign: bool){
+    fn literal(&mut self, _scanner: &mut Scanner, _vm: &mut VM, compiler: &mut Compiler, _canAssign: bool){
         match self.previous.ttype {
             TokenType::TOKEN_FALSE => {self.emitByte(OpCode::OP_FALSE as u8); ()},
             TokenType::TOKEN_TRUE => {self.emitByte(OpCode::OP_TRUE as u8); ()},
@@ -313,7 +362,7 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         } 
     }
 
-    fn string(&mut self, _scanner: &mut Scanner, _vm: &mut VM, _canAssign: bool){
+    fn string(&mut self, _scanner: &mut Scanner, _vm: &mut VM, compiler: &mut Compiler, _canAssign: bool){
         let quoted = self.previous.start.clone();
         let len = quoted.len();
         // trim of quotes
@@ -323,21 +372,53 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         self.emitConstant(data); 
     }
 
-    fn variable(&mut self, scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
-        self.namedVariable(self.previous.clone(), scanner, vm, canAssign);
+    fn variable(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler, canAssign: bool){
+        self.namedVariable(self.previous.clone(), scanner, vm, compiler,canAssign);
     }
 
-    fn namedVariable(&mut  self, name: Token, scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
-        let arg = self.identifierConstant(name);
+    fn namedVariable(&mut  self, name: Token, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler, canAssign: bool){
+        let getOp: OpCode;
+        let setOp: OpCode;
+        let arg  = match self.resolveLocal(compiler, name.clone()){
+            Some(index) => {
+                getOp = OpCode::OP_GET_LOCAL;
+                setOp = OpCode::OP_SET_LOCAL;
+                index
+            },
+            None => {
+                getOp = OpCode::OP_GET_GLOBAL;
+                setOp = OpCode::OP_SET_GLOBAL;
+                self.identifierConstant(name)
+            }
+        };
+
         if self.Match(scanner, vm, TokenType::TOKEN_EQUAL) && canAssign{
-            self.expression(scanner, vm);
-            self.emitTwoBytes(OpCode::OP_SET_GLOBAL as u8, arg);
+            self.expression(scanner, vm, compiler);
+            self.emitTwoBytes(setOp as u8, arg);
         }
-        self.emitTwoBytes(OpCode::OP_GET_GLOBAL as u8, arg);
+        self.emitTwoBytes(getOp as u8, arg);
+    }
+
+    fn resolveLocal(&mut self, comp: &mut Compiler, name: Token) -> Option<u8>{
+        let mut index: isize =  (comp.localCount as isize) -1;
+        loop {
+            if index < 0 {
+                break;
+            }
+            let local = comp.locals.get(index as usize).unwrap();
+            if local.name.EqualSemantically(name.clone()) {
+                if local.depth.is_none() {
+                    self.errorAt("Can't read local variable in it's own initializer".to_string(), ErrorTokenLoc::PREVIOUS);
+                }
+                return Some(index as u8);                
+            }
+            index -= 1;
+        }
+        return None;
     }
     
 // the function that handles precedence and allows recursion to occur
-    fn parsePrecedence(&mut self, init_precedence: Precedence, scanner: &mut Scanner, vm: &mut VM){
+    fn parsePrecedence(&mut self, init_precedence: Precedence, scanner: &mut Scanner, compiler: &mut Compiler, vm: &mut VM){
         self.advance(scanner, vm);
         let canAssign: bool;
         // Check if a prefix operation needs to be performed
@@ -348,7 +429,7 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
                     // after unwrapping everything, execute the prefix function
                     Some(prefix_func) => {
                         canAssign = init_precedence <= Precedence::PREC_ASSIGNMENT;
-                        prefix_func(self, scanner, vm, canAssign);
+                        prefix_func(self, scanner, vm, compiler, canAssign);
                     },
                     None => {
                         self.errorAt("Expect expression".to_string(), ErrorTokenLoc::PREVIOUS);
@@ -390,7 +471,7 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
             };
 
             match prev_rule.infix {
-                Some(function) => function(self, scanner, vm, canAssign),
+                Some(function) => function(self, scanner, vm, compiler, canAssign),
                 None => {
                     self.errorAt("Invalid infix rule".to_string(), ErrorTokenLoc::PREVIOUS);
                     return;
@@ -403,13 +484,41 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
         }
     }
 
-    fn parseVariable(&mut self, err_msg: String, scanner: &mut Scanner, vm: &mut VM) -> u8{
+    fn parseVariable(&mut self, err_msg: String, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler) -> u8{
         self.consume(TokenType::TOKEN_IDENTIFIER, err_msg, scanner, vm); 
+        self.declareVariable(compiler);
+        if compiler.scopeDepth > 0 {return 0;}
         return self.identifierConstant(self.previous.clone())
     }
 
-    fn defineVariable(&mut self, global: u8){
+    fn defineVariable(&mut self, global: u8, compiler: &mut Compiler){
+        if compiler.scopeDepth > 0{
+            compiler.markInitialized();
+            return; 
+        }
         self.emitTwoBytes(OpCode::OP_DEFINE_GLOBAL as u8, global);
+    }
+
+    fn declareVariable(&mut self, compiler: &mut Compiler){
+        if compiler.scopeDepth  == 0 {return ;}
+        let sd = compiler.scopeDepth;
+        let new_local: Locals = Locals::new(self.previous.clone(), Some(compiler.scopeDepth));
+        for index in  (0..compiler.localCount).rev(){
+            let local = compiler.locals.get(index as usize).unwrap();
+            if local.depth.unwrap() < sd{
+                break;
+            }
+            if  new_local.name.EqualSemantically(local.name.clone()) {
+                self.errorAt("Already variable with this name in this scope".to_string(), ErrorTokenLoc::PREVIOUS);
+            }
+        }
+        self.addLocal(compiler, new_local);
+    }
+
+    fn addLocal(&mut self, compiler: &mut Compiler, mut new_local: Locals){
+        new_local.depth = None;
+        compiler.localCount += 1;
+        compiler.locals.push(new_local);
     }
 
     fn identifierConstant(&mut self, name: Token) -> u8{
@@ -516,6 +625,25 @@ impl <'a,'b> Compiler<'a,'b> where 'a: 'b{
             self.advance(scanner, vm);
         }
     }
+   
+    fn block(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
+        loop {
+            let cond = self.isAtEnd() || self.check(TokenType::TOKEN_RIGHT_BRACE); 
+            if cond {break;}
+            self.declaration(scanner, vm, compiler);
+        }
+        self.consume(TokenType::TOKEN_RIGHT_BRACE, "Expect '}' after block.".to_string(), scanner, vm);
+    }
+
+    fn isAtEnd(&mut self) -> bool{
+        return self.current.ttype == TokenType::TOKEN_EOF
+    }
+
+    fn check(&mut self, expected: TokenType) -> bool {
+        if self.isAtEnd() {return false}
+        return self.current.ttype == expected
+    }
+
 }
 
 pub fn isFalsey(value: Value)-> bool{
@@ -528,4 +656,3 @@ pub fn isFalsey(value: Value)-> bool{
         _ => {return  false}        
     }
 }
-

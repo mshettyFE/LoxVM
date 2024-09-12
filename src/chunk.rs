@@ -11,8 +11,10 @@ pub enum OpCode {
     OP_FALSE,
     OP_POP,
     OP_GET_GLOBAL,
+    OP_GET_LOCAL,
     OP_DEFINE_GLOBAL,
     OP_SET_GLOBAL,
+    OP_SET_LOCAL,
     OP_ADD,
     OP_EQUAL,
     OP_GREATER,
@@ -92,6 +94,8 @@ impl Chunk {
                     OpCode::OP_DEFINE_GLOBAL => self.constant_instruction("OP_DEFINE_GLOBAL".to_string(), offset)?,
                     OpCode::OP_GET_GLOBAL => self.constant_instruction("OP_GET_GLOBAL".to_string(), offset)?,
                     OpCode::OP_SET_GLOBAL => self.constant_instruction("OP_SET_GLOBAL".to_string(), offset)?,
+                    OpCode::OP_GET_LOCAL => self.byte_instruction("OP_GET_LOCAL".to_string(), offset)?,
+                    OpCode::OP_SET_LOCAL => self.byte_instruction("OP_SET_LOCAL".to_string(),offset)?,
                     OpCode::OP_EQUAL => self.simple_instruction("OP_EQUAL".to_string(), offset)?,
                     OpCode::OP_GREATER => self.simple_instruction("OP_GREATER".to_string(), offset)?,
                     OpCode::OP_LESS => self.simple_instruction("OP_LESS".to_string(), offset)?,
@@ -138,6 +142,18 @@ impl Chunk {
             }
         }
     }
+  }
+
+  fn byte_instruction(&self, name: String, offset: usize) -> Result<usize, String>{
+    let slot = match self.code.get(offset+1){
+        Some(val) => val,
+        None => {
+            println!("Trying to access {} outside of code range", offset+1);
+            return Ok(offset+1);
+        } 
+    };
+    println!("{} {}", name, slot);
+    return Ok(offset +2);
   }
 
   pub fn disassemble(&self, name: String) -> Result<(), String>{

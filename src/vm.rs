@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::{chunk::{Chunk, OpCode}, object::LoxString, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use crate:: stack::LoxStack;
 use crate::value::*;
-use crate::compiler::Compiler;
+use crate::compiler::*;
 use crate::table::LoxTable;
 
 use core::fmt;
@@ -32,9 +32,10 @@ impl VM {
     pub fn interpret(&mut self, source: &String) -> InterpretResult { 
         let mut scanner = Scanner::new(source.to_string());
         let mut cnk = Chunk::new();
-        let mut parser = Compiler::new(&mut cnk);
+        let mut parser = Parser::new(&mut cnk);
+        let mut comp = Compiler::new();
         // compile() returns false if an error occurred.
-        if !parser.compile(&mut scanner, self){
+        if !parser.compile(&mut scanner, &mut comp, self){
             return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string());
         }
         self.chunk = cnk;
@@ -101,6 +102,20 @@ impl VM {
                }
                OpCode::OP_POP => {
                     self.stk.pop();
+               }
+               OpCode::OP_GET_LOCAL => {
+                    let slot = match self.read_byte() {
+                        Ok(val) => val,
+                        Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
+                    };
+                    self.stk.push(self.stk.get(slot as usize).unwrap());
+               }
+               OpCode::OP_SET_LOCAL => {
+                    let slot = match self.read_byte() {
+                        Ok(val) => val,
+                        Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
+                    };
+                    self.stk.set(slot as usize, self.stk.peek(0).unwrap());
                }
                OpCode::OP_GET_GLOBAL => {
                     let constant_index = match self.read_byte(){

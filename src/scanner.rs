@@ -37,11 +37,17 @@ pub enum TokenType{
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Token{
     pub ttype: TokenType,
     pub start: String, // the full string associated with the token
     pub line: usize, // the line number of the token
+}
+
+impl Token {
+    pub fn EqualSemantically(&self, other: Token) -> bool {
+        return self.ttype == other.ttype && self.start == other.start;
+    }
 }
 
 impl Scanner{

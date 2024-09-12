@@ -30,6 +30,14 @@ impl LoxStack {
         self.stk.get(index).cloned()
     }
 
+    pub fn get(&self, index: usize) -> Option<Value> {
+        self.stk.get(index).cloned()
+    }
+    
+    pub fn set(&mut self, index: usize, value: Value) {
+        self.stk[index] = value;
+    }
+
     pub fn print(&self){
         // convenience function to view the guts of the stack
         print!("        ");
