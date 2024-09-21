@@ -5,7 +5,7 @@ use crate::value::{Value, ValueArray};
 #[derive(FromPrimitive)]
 pub enum OpCode {
     // each entry corresponds to a single u8 unless noted otherwise
-    OP_CONSTANT, // format: OPCODE, ValueArrayIndex
+    OP_CONSTANT,
     OP_NIL,
     OP_TRUE,
     OP_FALSE,
@@ -25,6 +25,9 @@ pub enum OpCode {
     OP_NOT,
     OP_NEGATE,
     OP_PRINT,
+    OP_JUMP,
+    OP_JUMP_IF_FALSE,
+    OP_LOOP,
     OP_RETURN,
 }
 
@@ -44,6 +47,10 @@ impl Chunk {
         // instruction
         self.code.push(data);
         self.lines.push(line);
+    }
+
+    pub fn edit_chunk(&mut self, index: usize, new_data: u8){
+        self.code[index] = new_data;
     }
 
     pub fn get_instr(&self, index: usize) -> Option<&u8>{
@@ -96,6 +103,9 @@ impl Chunk {
                     OpCode::OP_SET_GLOBAL => self.constant_instruction("OP_SET_GLOBAL".to_string(), offset)?,
                     OpCode::OP_GET_LOCAL => self.byte_instruction("OP_GET_LOCAL".to_string(), offset)?,
                     OpCode::OP_SET_LOCAL => self.byte_instruction("OP_SET_LOCAL".to_string(),offset)?,
+                    OpCode::OP_JUMP => self.jump_instruction("OP_JUMP".to_string(), true , offset)?,
+                    OpCode::OP_LOOP => self.jump_instruction("OP_LOOP".to_string(), false, offset)?,
+                    OpCode::OP_JUMP_IF_FALSE => self.jump_instruction("OP_JUMP_IF_FALSE".to_string(), true , offset)?,
                     OpCode::OP_EQUAL => self.simple_instruction("OP_EQUAL".to_string(), offset)?,
                     OpCode::OP_GREATER => self.simple_instruction("OP_GREATER".to_string(), offset)?,
                     OpCode::OP_LESS => self.simple_instruction("OP_LESS".to_string(), offset)?,
@@ -106,8 +116,7 @@ impl Chunk {
                     OpCode::OP_MULTIPLY => self.simple_instruction("OP_MULTIPLY".to_string(), offset)?,
                     OpCode::OP_DIVIDE => self.simple_instruction("OP_DIVIDE".to_string(), offset)?,
                     OpCode::OP_NOT => self.simple_instruction("OP_NOT".to_string(), offset)?,
-
-                    };
+                };
                 return Ok(new_offset);
                 }
             }
@@ -144,7 +153,22 @@ impl Chunk {
     }
   }
 
+  fn jump_instruction(&self, name: String, sign: bool, offset: usize) -> Result<usize, String>{
+      let high_byte: u16 = (*self.code.get(offset+1).unwrap()  as u16) << (8 as u16);
+      let low_byte: u16 = (*self.code.get(offset+2).unwrap()  as u16) << (8 as u16);
+      let jump: u16 = high_byte | low_byte;
+      let s: isize = match sign {
+            true => 1,
+            false => -1
+      };
+      let val: usize = offset + (3 as usize) + (s * (jump as isize)) as usize;
+      println!("{} {} {}", name,offset, val);
+      Ok(offset +3)
+  }
+
   fn byte_instruction(&self, name: String, offset: usize) -> Result<usize, String>{
+    // format: OPCODE name value
+    // corresponds to variables
     let slot = match self.code.get(offset+1){
         Some(val) => val,
         None => {
@@ -157,6 +181,7 @@ impl Chunk {
   }
 
   pub fn disassemble(&self, name: String) -> Result<(), String>{
+    // helper function to print out chunk contents
     println!("== {} ==", name);
 
     let mut offset: usize = 0;

@@ -9,12 +9,13 @@ use crate::DEBUG_PRINT_CODE;
 use crate::vm::VM;
 use std::mem;
 
+// size of ParseRules lookup table
 const TOTAL_RULES: usize = 40;
 
 pub struct Compiler {
-    locals: Vec<Locals>,
-    localCount: u64,
-    scopeDepth: u64
+    locals: Vec<Locals>, // a stack of local variables that are accessible in the current scope
+    localCount: u64, // a count of the number of variables accessible in the current scope
+    scopeDepth: u64 // the current scope
 }
 
 impl Compiler {
@@ -31,14 +32,16 @@ impl Compiler {
     }
     
     fn markInitialized(& mut self) {
+        // utilized to prevent self-initialization (ie. var a = a; type of thing).
+        // Use option as a sentinel value
         self.locals.get_mut((self.localCount) as usize -1).unwrap().depth = 
             Some(self.scopeDepth);
     }
 }
 
 pub struct Locals {
-    pub name: Token,
-    pub depth: Option<u64>,
+    pub name: Token, // name of variable
+    pub depth: Option<u64>, // scope of local
 }
 
 impl Locals {
@@ -154,7 +157,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
  rules[TokenType::TOKEN_IDENTIFIER as usize] = ParseRule{prefix: Some(Parser::variable), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_STRING as usize] = ParseRule{prefix: Some(Parser::string), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_NUMBER as usize] = ParseRule{prefix: Some(Parser::number), infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_AND as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_AND as usize] = ParseRule{prefix: None, infix: Some(Parser::and), precedence: Precedence::PREC_AND};
  rules[TokenType::TOKEN_CLASS as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_ELSE as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_FALSE as usize] = ParseRule{prefix: Some(Parser::literal), infix: None, precedence: Precedence::PREC_NONE};
@@ -162,7 +165,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
  rules[TokenType::TOKEN_FUN as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_IF as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_NIL as usize] = ParseRule{prefix: Some(Parser::literal), infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_OR as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_OR as usize] = ParseRule{prefix: None, infix: Some(Parser::or), precedence: Precedence::PREC_OR};
  rules[TokenType::TOKEN_PRINT as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_RETURN as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_SUPER as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
@@ -217,12 +220,14 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
     }
 
     fn Match(&mut self, scanner: &mut Scanner, vm: &mut VM, wanted_token_type: TokenType) -> bool{
+        // check if current token matches what you want. If so, advance in stream
         if self.current.ttype != wanted_token_type { return false;}
         self.advance(scanner, vm);
         return true;
     }
    
     fn consume(&mut self, wanted_token: TokenType, err_msg: String, scanner: &mut Scanner, vm: &mut VM){
+        // check if current matches expected. If not, throw error message
         if self.current.ttype == wanted_token {
             self.advance(scanner, vm);
             return
@@ -231,7 +236,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
     }
  
     fn endParser(&mut self){
-        // tops of chunk with return, and then disassembles if prompted
+        // tops off chunk with return, and then disassembles if prompted
         self.emitReturn();
         if *DEBUG_PRINT_CODE.get().unwrap(){
             if !self.hadError{
@@ -243,6 +248,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
 
 // grammar production functions
 // see https://craftinginterpreters.com/image/compiling-expressions/connections.png
+// These are effectively translating the BNF notation of Lox into code
 
     fn declaration(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
         if self.Match(scanner, vm, TokenType::TOKEN_VAR){
@@ -269,7 +275,15 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
     fn statement(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
         if self.Match(scanner, vm, TokenType::TOKEN_PRINT){
             self.printStatement(scanner, vm, compiler); 
-        } else if self.Match(scanner, vm, TokenType::TOKEN_LEFT_BRACE){
+        } else if self.Match(scanner, vm, TokenType::TOKEN_FOR){
+            self.forStatement(scanner, vm, compiler);
+        }
+        else if self.Match(scanner, vm, TokenType::TOKEN_IF){
+            self.ifStatement(scanner,vm, compiler);
+        } else if self.Match(scanner, vm, TokenType::TOKEN_WHILE){
+            self.whileStatement(scanner, vm, compiler);
+        } 
+        else if self.Match(scanner, vm, TokenType::TOKEN_LEFT_BRACE){
             compiler.beginScope();
             self.block(scanner, vm, compiler);
             compiler.endScope();
@@ -295,7 +309,6 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         self.expression(scanner, vm, compiler);
         self.consume(TokenType::TOKEN_SEMICOLON, "Expect ; after value.".to_string(), scanner, vm);
         self.emitByte(OpCode::OP_PRINT as u8);
-
     }
 
     fn expressionStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
@@ -303,6 +316,90 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         self.consume(TokenType::TOKEN_SEMICOLON, "Expect ; after value.".to_string(), scanner, vm);
         self.emitByte(OpCode::OP_POP as u8);
     }
+
+    fn forStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
+        compiler.beginScope(); 
+        self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'for'.".to_string(), scanner, vm);
+        if self.Match(scanner, vm, TokenType::TOKEN_SEMICOLON){}
+        else if self.Match(scanner, vm, TokenType::TOKEN_VAR){
+            self.varDeclaration(scanner, vm, compiler);
+        } else {
+            self.expressionStatement(scanner, vm, compiler);
+        }
+        
+
+        let mut loopStart = self.currentChunk().get_count();
+
+        let exitJump: Option<usize>;
+        if !self.Match(scanner, vm, TokenType::TOKEN_SEMICOLON) {
+            self.expression(scanner, vm, compiler);
+            self.consume(TokenType::TOKEN_SEMICOLON, "Expect ';' after condition.".to_string(), scanner, vm);
+            
+            exitJump =  Some(self.emitJump(OpCode::OP_JUMP_IF_FALSE));
+            self.emitByte(OpCode::OP_POP as u8);
+        } else{
+            exitJump = None;
+        }
+        
+        if  !self.Match(scanner, vm, TokenType::TOKEN_RIGHT_PAREN) {
+            let bodyJump = self.emitJump(OpCode::OP_JUMP);
+            let incrementStart = self.currentChunk().get_count();
+            self.expression(scanner, vm, compiler);
+            self.emitByte(OpCode::OP_POP as u8);
+            self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after 'for'.".to_string(), scanner, vm);
+
+            self.emitLoop(loopStart);
+            loopStart = incrementStart;
+
+            self.patchJump(bodyJump);
+        }
+
+        self.statement(scanner, vm, compiler);
+
+        self.emitLoop(loopStart);
+        match exitJump {
+            Some(offset) => {self.patchJump(offset); self.emitByte(OpCode::OP_POP as u8); ()}
+            None => ()
+        }
+
+        compiler.endScope();
+
+    }
+
+    fn ifStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
+        self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'if'.".to_string(), scanner, vm);
+        self.expression(scanner, vm, compiler);
+        self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect '(' after condition.".to_string(), scanner, vm);
+        let thenJump: usize = self.emitJump(OpCode::OP_JUMP_IF_FALSE); 
+        self.emitByte(OpCode::OP_POP as u8);
+        self.statement(scanner, vm, compiler);
+        
+        let elseJump: usize = self.emitJump(OpCode::OP_JUMP);
+        self.patchJump(thenJump);
+        self.emitByte(OpCode::OP_POP as u8);
+
+        if (self.Match(scanner, vm, TokenType::TOKEN_ELSE)) {self.statement(scanner, vm, compiler);}
+
+        self.patchJump(elseJump);
+    }
+
+    fn whileStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
+        let loopStart = self.currentChunk().get_count();
+        self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'while'.".to_string(), scanner, vm);
+        self.expression(scanner, vm, compiler);
+        self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after 'while'.".to_string(), scanner, vm);
+        
+        let exitJump = self.emitJump(OpCode::OP_JUMP_IF_FALSE);
+        self.statement(scanner, vm, compiler);
+
+        self.emitLoop(loopStart);
+
+        self.patchJump(exitJump);
+        self.emitByte(OpCode::OP_POP as u8);
+        
+
+    }
+
 
     fn expression(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler) {
         // interpret an expression
@@ -347,13 +444,29 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         }
     }
     
-    fn number(&mut self, _scanner: &mut Scanner, _vm: &mut VM, compiler: &mut Compiler, _canAssign: bool){
+    fn number(&mut self, _scanner: &mut Scanner, _vm: &mut VM, _compiler: &mut Compiler, _canAssign: bool){
         // cast the previous token's string into a double and add said constant to chunk
         let value: f64 = self.previous.start.parse().unwrap(); 
         self.emitConstant(Value::VAL_NUMBER(value));
     }
 
-    fn literal(&mut self, _scanner: &mut Scanner, _vm: &mut VM, compiler: &mut Compiler, _canAssign: bool){
+    fn and(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler, canAssign: bool){
+        let endJump = self.emitJump(OpCode::OP_JUMP_IF_FALSE);
+        self.emitByte(OpCode::OP_POP as u8);
+        self.parsePrecedence(Precedence::PREC_AND, scanner, compiler, vm);
+        self.patchJump(endJump);
+    }
+    
+    fn or(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler, canAssign: bool){
+        let elseJump = self.emitJump(OpCode::OP_JUMP_IF_FALSE);
+        let endJump = self.emitJump(OpCode::OP_JUMP);
+        self.patchJump(elseJump);
+        self.emitByte(OpCode::OP_POP as u8);
+        self.parsePrecedence(Precedence::PREC_OR, scanner, compiler, vm);
+        self.patchJump(endJump);
+    }
+
+    fn literal(&mut self, _scanner: &mut Scanner, _vm: &mut VM, _compiler: &mut Compiler, _canAssign: bool){
         match self.previous.ttype {
             TokenType::TOKEN_FALSE => {self.emitByte(OpCode::OP_FALSE as u8); ()},
             TokenType::TOKEN_TRUE => {self.emitByte(OpCode::OP_TRUE as u8); ()},
@@ -362,7 +475,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         } 
     }
 
-    fn string(&mut self, _scanner: &mut Scanner, _vm: &mut VM, compiler: &mut Compiler, _canAssign: bool){
+    fn string(&mut self, _scanner: &mut Scanner, _vm: &mut VM, _compiler: &mut Compiler, _canAssign: bool){
         let quoted = self.previous.start.clone();
         let len = quoted.len();
         // trim of quotes
@@ -379,6 +492,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
     fn namedVariable(&mut  self, name: Token, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler, canAssign: bool){
         let getOp: OpCode;
         let setOp: OpCode;
+        // decide if variable is local or global, and choose the appropriate opcodes
         let arg  = match self.resolveLocal(compiler, name.clone()){
             Some(index) => {
                 getOp = OpCode::OP_GET_LOCAL;
@@ -567,6 +681,28 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
 
     fn emitReturn(&mut self) {
         self.emitByte(OpCode::OP_RETURN as u8);
+    }
+
+    fn emitJump(&mut self, new_val: OpCode) -> usize{
+        self.emitByte(new_val as u8);
+        self.emitByte(0xff);
+        self.emitByte(0xff);
+        return self.currentChunk().get_count()-2
+    }
+
+    fn patchJump(&mut self, offset: usize){
+        let jump = self.currentChunk().get_count()-offset-2;
+        self.currentChunk().edit_chunk(offset, (jump >> 8) as u8 & 0xFF);
+        self.currentChunk().edit_chunk(offset, (jump & 0xFF) as u8);
+    }
+
+    fn emitLoop(&mut self, loopStart: usize){
+        self.emitByte(OpCode::OP_LOOP as u8);
+        let offset = self.currentChunk().get_count()- loopStart+2;
+        let high = offset >> 8 & 0xff;
+        let low = offset & 0xff;
+        self.emitByte(high as u8);
+        self.emitByte(low as u8);
     }
     
     fn currentChunk(&mut self) -> &mut Chunk{

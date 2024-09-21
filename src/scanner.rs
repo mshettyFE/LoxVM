@@ -231,7 +231,7 @@ impl Scanner{
                 if unsigned_abs_sub(self.current, self.start) > 1{
                     match self.source.as_bytes()[self.start+1] as char {
                         'a' => return self.checkKeyword(2, 3, "lse".to_string(), TokenType::TOKEN_FALSE),
-                        'o' => return self.checkKeyword(2, 1, "r".to_string(), TokenType::TOKEN_OR),
+                        'o' => return self.checkKeyword(2, 1, "r".to_string(), TokenType::TOKEN_FOR),
                         'u' => return self.checkKeyword(2, 1, "n".to_string(), TokenType::TOKEN_FUN),
                         _ => return TokenType::TOKEN_IDENTIFIER,
                     }

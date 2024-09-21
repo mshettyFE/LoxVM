@@ -77,6 +77,20 @@ impl VM {
                         None => {return InterpretResult::INTERPRET_RUNTIME_ERROR("Stack is empty".to_string())}
                      }
                  }
+                OpCode::OP_LOOP => {
+                    let offset = self.read_short();
+                    self.ip -= offset as usize;
+                }
+                OpCode::OP_JUMP =>{
+                    let offset = self.read_short();
+                    self.ip += offset as usize;
+                }
+                OpCode::OP_JUMP_IF_FALSE => {
+                    let offset = self.read_short();
+                    if isFalsey(self.stk.peek(0).unwrap()) {
+                        self.ip += offset as usize;
+                    }
+                }
                 OpCode::OP_RETURN => {
                    return InterpretResult::INTERPRET_OK
                 },
@@ -380,5 +394,12 @@ impl VM {
         let line_err = format!("[line {}] in script\n", line);
         self.stk.reset();
         return format!("{}{}", err_msg,line_err);
+    }
+
+    fn read_short(&mut self) -> u16{
+        self.ip += 2;
+       let higher_byte: u8 = *self.chunk.get_instr(self.ip-2).unwrap();
+       let lower_byte: u8 = *self.chunk.get_instr(self.ip-1).unwrap();
+       ((higher_byte as u16)  << (8 as u16)) | lower_byte as u16
     }
 }
