@@ -399,7 +399,6 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         self.emitByte(OpCode::OP_POP as u8);
     }
 
-
     fn expression(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler) {
         // interpret an expression
         self.parsePrecedence(Precedence::PREC_ASSIGNMENT, scanner, compiler,vm);
@@ -700,7 +699,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
     fn emitLoop(&mut self, loopStart: usize){
         self.emitByte(OpCode::OP_LOOP as u8);
         let offset = self.currentChunk().get_count()- loopStart+2;
-        let high = offset >> 8 & 0xff;
+        let high = (offset >> 8) & 0xff;
         let low = offset & 0xff;
         self.emitByte(high as u8);
         self.emitByte(low as u8);
