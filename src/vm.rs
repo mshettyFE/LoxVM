@@ -404,7 +404,6 @@ impl VM {
         self.ip += 2;
        let higher_byte: u8 = *self.chunk.get_instr(self.ip-2).unwrap();
        let lower_byte: u8 = *self.chunk.get_instr(self.ip-1).unwrap();
-       println!("READ_SHORT {} {} {}", self.ip, higher_byte, lower_byte);
        ((higher_byte as u16)  << (8 as u16)) | lower_byte as u16
     }
 }

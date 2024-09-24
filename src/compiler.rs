@@ -693,7 +693,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         let high = jump >> 8 & 0xFF;
         let low  = jump & 0xFF;
         self.currentChunk().edit_chunk(offset, high as u8);
-        self.currentChunk().edit_chunk(offset, low as u8);
+        self.currentChunk().edit_chunk(offset+1, low as u8);
     }
 
     fn emitLoop(&mut self, loopStart: usize){
