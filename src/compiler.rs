@@ -318,6 +318,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
     }
 
     fn forStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
+// Out of bounds problem here        
         compiler.beginScope(); 
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'for'.".to_string(), scanner, vm);
         if self.Match(scanner, vm, TokenType::TOKEN_SEMICOLON){}
@@ -384,20 +385,18 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
     }
 
     fn whileStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
+// Out of bounds problem here        
         let loopStart = self.currentChunk().get_count();
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'while'.".to_string(), scanner, vm);
         self.expression(scanner, vm, compiler);
         self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after 'while'.".to_string(), scanner, vm);
         
         let exitJump = self.emitJump(OpCode::OP_JUMP_IF_FALSE);
+        self.emitByte(OpCode::OP_POP as u8);
         self.statement(scanner, vm, compiler);
-
         self.emitLoop(loopStart);
-
         self.patchJump(exitJump);
         self.emitByte(OpCode::OP_POP as u8);
-        
-
     }
 
 
@@ -692,8 +691,10 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
 
     fn patchJump(&mut self, offset: usize){
         let jump = self.currentChunk().get_count()-offset-2;
-        self.currentChunk().edit_chunk(offset, (jump >> 8) as u8 & 0xFF);
-        self.currentChunk().edit_chunk(offset, (jump & 0xFF) as u8);
+        let high = jump >> 8 & 0xFF;
+        let low  = jump & 0xFF;
+        self.currentChunk().edit_chunk(offset, high as u8);
+        self.currentChunk().edit_chunk(offset, low as u8);
     }
 
     fn emitLoop(&mut self, loopStart: usize){

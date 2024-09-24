@@ -1,4 +1,5 @@
 #![allow(non_camel_case_types)]
+use std::fmt::format;
 use std::{cell::RefCell};
 use std::rc::Rc;
 use crate::{chunk::{Chunk, OpCode}, object::LoxString, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
@@ -7,7 +8,7 @@ use crate::value::*;
 use crate::compiler::*;
 use crate::table::LoxTable;
 
-use core::fmt;
+use core::{fmt, panic};
 
 pub enum InterpretResult {
     INTERPRET_OK,
@@ -365,7 +366,11 @@ impl VM {
     fn read_byte(&mut self) -> Result<u8, String> {
         let output: Result<u8,String> = match self.chunk.get_instr(self.ip){
             Some(val) => Ok(*val),
-            None => Err(format!("Out of bounds access of code: {}", self.ip)),
+            None => {
+                let err_msg = format!("Out of bounds access of code: {}", self.ip);
+//                panic!("{}",err_msg);
+                Err(err_msg)
+            }
         };
         self.ip += 1;
         return output;

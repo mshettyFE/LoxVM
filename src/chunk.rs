@@ -155,7 +155,7 @@ impl Chunk {
 
   fn jump_instruction(&self, name: String, sign: bool, offset: usize) -> Result<usize, String>{
       let high_byte: u16 = (*self.code.get(offset+1).unwrap()  as u16) << (8 as u16);
-      let low_byte: u16 = (*self.code.get(offset+2).unwrap()  as u16) << (8 as u16);
+      let low_byte: u16 = *self.code.get(offset+2).unwrap()  as u16;
       let jump: u16 = high_byte | low_byte;
       let s: isize = match sign {
             true => 1,
