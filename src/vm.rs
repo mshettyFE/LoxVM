@@ -232,7 +232,7 @@ impl VM {
                         },
                         None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 1));},
                     };
-                   self.stk.push(Value::VAL_BOOL(a> b));
+                   self.stk.push(Value::VAL_BOOL(b> a));
                },
                OpCode::OP_LESS => {
                    let a = match self.stk.peek(0){
@@ -253,7 +253,7 @@ impl VM {
                         },
                         None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 1));},
                     };
-                   self.stk.push(Value::VAL_BOOL(a< b));
+                   self.stk.push(Value::VAL_BOOL(b< a));
                },
                OpCode::OP_NEGATE => {
                     let peek_val = match self.stk.peek(0) {
