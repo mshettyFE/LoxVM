@@ -1,4 +1,6 @@
 #![allow(non_camel_case_types)]
+use num::CheckedAdd;
+
 use crate::value::{Value, ValueArray};
 
 // Growing list of supported opcodes
@@ -161,7 +163,8 @@ impl Chunk {
             true => 1,
             false => -1
       };
-      let val: usize = offset + (3 as usize) + (s * (jump as isize)) as usize;
+      let jump_offset = s * (jump as isize);
+      let val: usize = (offset as i64 + 3 + (jump_offset as i64)) as usize;
       println!("{} {} {}", name,offset, val);
       Ok(offset +3)
   }
