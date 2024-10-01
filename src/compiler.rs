@@ -1,7 +1,7 @@
 #![allow(non_camel_case_types)]
 use std::rc::Rc;
 use std::cell::RefCell;
-use crate::object::LoxString;
+use crate::object::{LoxFunction, LoxString};
 use crate::scanner::{Token, TokenType, Scanner};
 use crate::chunk::{Chunk, OpCode};
 use crate::value::Value;
@@ -12,7 +12,15 @@ use std::mem;
 // size of ParseRules lookup table
 const TOTAL_RULES: usize = 40;
 
+pub enum FunctionType {
+    TYPE_FUNCTION,
+    TYPE_SCRIPT,
+}
+
+
 pub struct Compiler {
+    function: Option<LoxFunction>,
+    ftype: FunctionType,
     locals: Vec<Locals>, // a stack of local variables that are accessible in the current scope
     localCount: u64, // a count of the number of variables accessible in the current scope
     scopeDepth: u64 // the current scope
@@ -20,7 +28,7 @@ pub struct Compiler {
 
 impl Compiler {
     pub fn new() -> Self{
-        Compiler{locals: Vec::new(), localCount: 0, scopeDepth: 0}
+        Compiler{function: None, ftype: FunctionType::TYPE_SCRIPT  ,locals: Vec::new(), localCount: 0, scopeDepth: 0}
     }
 
     pub fn beginScope(&mut self){
@@ -53,8 +61,8 @@ impl Locals {
 // the beating heart of the interpreter
 // requests tokens as needed from a scanner, then converts them too bytecode
 // It's basically as single pass compiler
-pub struct Parser <'a,'b>{
-    compiling_chunk: &'a mut Chunk, // current chunk being executed. Could represent a function, or
+pub struct Parser{
+    compiler: Compiler, // current chunk being executed. Could represent a function, or
                                     // a group of statements
     // the tokens under consideration
     current: Token,                 
@@ -63,7 +71,7 @@ pub struct Parser <'a,'b>{
     hadError: bool,                 
     panicMode: bool,                // if true, denotes that the parser has no idea where it is,
                                     // and is trying it's best to get back on the right path 
-    rule_table: [ParseRule<'a,'b>; TOTAL_RULES], // lookup table which maps Tokens to rules which define
+    rule_table: [ParseRule; TOTAL_RULES], // lookup table which maps Tokens to rules which define
                                         // prefix and infix functions, as well as the token
                                         // precedence
 }
@@ -120,14 +128,14 @@ impl Precedence{
 // The nice thing about this is that you can add more "fixes" (like postfix) to the table
 // relatively easily (after the upfront cost of updating the rules table
 #[derive(Debug)]
-pub struct ParseRule<'a,'b>{
-    prefix: Option<fn(&mut Parser<'a,'b>, &mut Scanner, &mut VM,&mut Compiler,  bool)>,
-    infix: Option<fn(&mut Parser<'a,'b>, &mut Scanner, &mut VM,&mut Compiler, bool )>,
+pub struct ParseRule{
+    prefix: Option<fn(&mut Parser, &mut Scanner, &mut VM,  bool)>,
+    infix: Option<fn(&mut Parser, &mut Scanner, &mut VM,bool )>,
     precedence: Precedence,
 }
 
-impl <'a,'b> Parser<'a,'b> where 'a: 'b{
-  pub fn new (chnk: &'a mut Chunk) -> Self{
+impl Parser{
+  pub fn new () -> Self{
     let empty_rule: ParseRule = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
     let rules = &mut [empty_rule; TOTAL_RULES];
 
@@ -176,7 +184,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
  rules[TokenType::TOKEN_ERROR as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_EOF as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
     
- Parser{compiling_chunk: chnk, 
+ Parser{compiler: Compiler::new(), 
         previous: Token {ttype: TokenType::TOKEN_ERROR, start: "".to_string(), line: 0 },
         current: Token { ttype: TokenType::TOKEN_ERROR, start: "".to_string(), line: 0 },
         hadError: false,
@@ -184,7 +192,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         rule_table: *rules,
     }
   }
-    pub fn compile(&mut self, scanner: &mut Scanner, compiler: &mut Compiler, vm: &mut VM) -> bool{
+    pub fn compile(&mut self, scanner: &mut Scanner, vm: &mut VM) -> bool{
         // interface of parser. Give it a scanner, and it will chew through the tokens, spitting
         // out byte code
         // returns false if an error has occurred
@@ -193,7 +201,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
            if self.Match(scanner,vm, TokenType::TOKEN_EOF){
                 break;
            } 
-           self.declaration(scanner, vm, compiler);
+           self.declaration(scanner, vm);
         }
         // last token needs to be EOF, otherwise, we have problems
         self.consume(TokenType::TOKEN_EOF, "Expected end of expression.".to_string(), scanner, vm);
@@ -250,82 +258,82 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
 // see https://craftinginterpreters.com/image/compiling-expressions/connections.png
 // These are effectively translating the BNF notation of Lox into code
 
-    fn declaration(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
+    fn declaration(&mut self, scanner: &mut Scanner, vm: &mut VM){
         if self.Match(scanner, vm, TokenType::TOKEN_VAR){
-            self.varDeclaration(scanner, vm, compiler);
+            self.varDeclaration(scanner, vm);
         } else {
-            self.statement(scanner, vm, compiler); 
+            self.statement(scanner, vm); 
         }
         if self.panicMode {
             self.synchronize(scanner, vm);
         }
     }
 
-    fn varDeclaration(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
-        let global = self.parseVariable("Expect variable name".to_string(), scanner, vm, compiler);
+    fn varDeclaration(&mut self, scanner: &mut Scanner, vm: &mut VM ){
+        let global = self.parseVariable("Expect variable name".to_string(), scanner, vm);
         if self.Match(scanner, vm, TokenType::TOKEN_EQUAL) {
-            self.expression(scanner, vm, compiler);
+            self.expression(scanner, vm);
         } else {
             self.emitByte(OpCode::OP_NIL as u8);
         }
         self.consume(TokenType::TOKEN_SEMICOLON, "Expect ';' after variable declaration.".to_string(), scanner, vm);
-        self.defineVariable(global, compiler);
+        self.defineVariable(global);
     }
     
-    fn statement(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
+    fn statement(&mut self, scanner: &mut Scanner, vm: &mut VM, ){
         if self.Match(scanner, vm, TokenType::TOKEN_PRINT){
-            self.printStatement(scanner, vm, compiler); 
+            self.printStatement(scanner, vm); 
         } else if self.Match(scanner, vm, TokenType::TOKEN_FOR){
-            self.forStatement(scanner, vm, compiler);
+            self.forStatement(scanner, vm);
         }
         else if self.Match(scanner, vm, TokenType::TOKEN_IF){
-            self.ifStatement(scanner,vm, compiler);
+            self.ifStatement(scanner,vm);
         } else if self.Match(scanner, vm, TokenType::TOKEN_WHILE){
-            self.whileStatement(scanner, vm, compiler);
+            self.whileStatement(scanner, vm);
         } 
         else if self.Match(scanner, vm, TokenType::TOKEN_LEFT_BRACE){
-            compiler.beginScope();
-            self.block(scanner, vm, compiler);
-            compiler.endScope();
+            self.compiler.beginScope();
+            self.block(scanner, vm);
+            self.compiler.endScope();
             loop {
-                if compiler.localCount == 0 {
+                if self.compiler.localCount == 0 {
                     break;
                 }
-                let var_depth = compiler.locals.get( (compiler.localCount-1) as usize ).unwrap().depth;
-                if var_depth.unwrap() > compiler.scopeDepth {
+                let var_depth = self.compiler.locals.get( (self.compiler.localCount-1) as usize ).unwrap().depth;
+                if var_depth.unwrap() > self.compiler.scopeDepth {
                     self.emitByte(OpCode::OP_POP as u8);
-                    compiler.localCount -= 1;
+                    self.compiler.localCount -= 1;
                     continue;
                 }
                 break;
             }
         }
         else {
-            self.expressionStatement(scanner, vm, compiler);
+            self.expressionStatement(scanner, vm);
         }
     }
 
-    fn printStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
-        self.expression(scanner, vm, compiler);
+    fn printStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, ){
+        self.expression(scanner, vm);
         self.consume(TokenType::TOKEN_SEMICOLON, "Expect ; after value.".to_string(), scanner, vm);
         self.emitByte(OpCode::OP_PRINT as u8);
     }
 
-    fn expressionStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
-        self.expression(scanner, vm, compiler);
+    fn expressionStatement(&mut self, scanner: &mut Scanner, vm: &mut VM ){
+        self.expression(scanner, vm);
         self.consume(TokenType::TOKEN_SEMICOLON, "Expect ; after value.".to_string(), scanner, vm);
         self.emitByte(OpCode::OP_POP as u8);
     }
 
-    fn forStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
+    fn forStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, ){
 // Out of bounds problem here        
-        compiler.beginScope(); 
+        self.compiler.beginScope(); 
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'for'.".to_string(), scanner, vm);
         if self.Match(scanner, vm, TokenType::TOKEN_SEMICOLON){}
         else if self.Match(scanner, vm, TokenType::TOKEN_VAR){
-            self.varDeclaration(scanner, vm, compiler);
+            self.varDeclaration(scanner, vm);
         } else {
-            self.expressionStatement(scanner, vm, compiler);
+            self.expressionStatement(scanner, vm);
         }
         
 
@@ -333,7 +341,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
 
         let exitJump: Option<usize>;
         if !self.Match(scanner, vm, TokenType::TOKEN_SEMICOLON) {
-            self.expression(scanner, vm, compiler);
+            self.expression(scanner, vm);
             self.consume(TokenType::TOKEN_SEMICOLON, "Expect ';' after condition.".to_string(), scanner, vm);
             
             exitJump =  Some(self.emitJump(OpCode::OP_JUMP_IF_FALSE));
@@ -345,7 +353,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         if  !self.Match(scanner, vm, TokenType::TOKEN_RIGHT_PAREN) {
             let bodyJump = self.emitJump(OpCode::OP_JUMP);
             let incrementStart = self.currentChunk().get_count();
-            self.expression(scanner, vm, compiler);
+            self.expression(scanner, vm);
             self.emitByte(OpCode::OP_POP as u8);
             self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after 'for'.".to_string(), scanner, vm);
 
@@ -355,7 +363,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
             self.patchJump(bodyJump);
         }
 
-        self.statement(scanner, vm, compiler);
+        self.statement(scanner, vm);
 
         self.emitLoop(loopStart);
         match exitJump {
@@ -363,58 +371,58 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
             None => ()
         }
 
-        compiler.endScope();
+        self.compiler.endScope();
 
     }
 
-    fn ifStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
+    fn ifStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, ){
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'if'.".to_string(), scanner, vm);
-        self.expression(scanner, vm, compiler);
+        self.expression(scanner, vm);
         self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect '(' after condition.".to_string(), scanner, vm);
         let thenJump: usize = self.emitJump(OpCode::OP_JUMP_IF_FALSE); 
         self.emitByte(OpCode::OP_POP as u8);
-        self.statement(scanner, vm, compiler);
+        self.statement(scanner, vm);
         
         let elseJump: usize = self.emitJump(OpCode::OP_JUMP);
         self.patchJump(thenJump);
         self.emitByte(OpCode::OP_POP as u8);
 
-        if (self.Match(scanner, vm, TokenType::TOKEN_ELSE)) {self.statement(scanner, vm, compiler);}
+        if self.Match(scanner, vm, TokenType::TOKEN_ELSE) {self.statement(scanner, vm);}
 
         self.patchJump(elseJump);
     }
 
-    fn whileStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
+    fn whileStatement(&mut self, scanner: &mut Scanner, vm: &mut VM, ){
 // Out of bounds problem here        
         let loopStart = self.currentChunk().get_count();
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'while'.".to_string(), scanner, vm);
-        self.expression(scanner, vm, compiler);
+        self.expression(scanner, vm);
         self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after 'while'.".to_string(), scanner, vm);
         
         let exitJump = self.emitJump(OpCode::OP_JUMP_IF_FALSE);
         self.emitByte(OpCode::OP_POP as u8);
-        self.statement(scanner, vm, compiler);
+        self.statement(scanner, vm);
         self.emitLoop(loopStart);
         self.patchJump(exitJump);
         self.emitByte(OpCode::OP_POP as u8);
     }
 
-    fn expression(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler) {
+    fn expression(&mut self, scanner: &mut Scanner, vm: &mut VM ) {
         // interpret an expression
-        self.parsePrecedence(Precedence::PREC_ASSIGNMENT, scanner, compiler,vm);
+        self.parsePrecedence(Precedence::PREC_ASSIGNMENT, scanner,vm);
     }
 
-    fn grouping(&mut self, scanner: &mut Scanner, vm: &mut VM, comp: &mut Compiler, _canAssign: bool){
+    fn grouping(&mut self, scanner: &mut Scanner, vm: &mut VM, _canAssign: bool){
         // do a bunch of expression wrapped in parentheses
-        self.expression(scanner, vm, comp);
+        self.expression(scanner, vm);
         self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expected ')' after expression".to_string(), scanner, vm);
     } 
 
-    fn unary(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler, _canAssign: bool){
+    fn unary(&mut self, scanner: &mut Scanner, vm: &mut VM, _canAssign: bool){
         // once you you hit a unary, you need to process the the following expression while
         // respecting precedence
         let operatorType = self.previous.ttype.clone();
-        self.parsePrecedence(Precedence::PREC_UNARY, scanner, compiler,vm);
+        self.parsePrecedence(Precedence::PREC_UNARY, scanner,vm);
         // after the fact, you apply the unary
         match operatorType {
             TokenType::TOKEN_BANG => {self.emitByte(OpCode::OP_NOT as u8); () },
@@ -423,10 +431,10 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         }
     }
     
-    fn binary(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler, _canAssign: bool){
+    fn binary(&mut self, scanner: &mut Scanner, vm: &mut VM, _canAssign: bool){
         let operatorType = self.previous.ttype.clone();
         let rule = self.getRule(operatorType);
-        self.parsePrecedence(rule.unwrap().precedence.decrease_prec().unwrap(), scanner, compiler,vm);
+        self.parsePrecedence(rule.unwrap().precedence.decrease_prec().unwrap(), scanner,vm);
         match operatorType {
             TokenType::TOKEN_BANG_EQUAL => {self.emitTwoBytes(OpCode::OP_EQUAL as u8, OpCode::OP_NOT as u8); ()},
             TokenType::TOKEN_EQUAL_EQUAL => {self.emitByte(OpCode::OP_EQUAL as u8); ()},
@@ -442,29 +450,29 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         }
     }
     
-    fn number(&mut self, _scanner: &mut Scanner, _vm: &mut VM, _compiler: &mut Compiler, _canAssign: bool){
+    fn number(&mut self, _scanner: &mut Scanner, _vm: &mut VM, _canAssign: bool){
         // cast the previous token's string into a double and add said constant to chunk
         let value: f64 = self.previous.start.parse().unwrap(); 
         self.emitConstant(Value::VAL_NUMBER(value));
     }
 
-    fn and(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler, canAssign: bool){
+    fn and(&mut self, scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
         let endJump = self.emitJump(OpCode::OP_JUMP_IF_FALSE);
         self.emitByte(OpCode::OP_POP as u8);
-        self.parsePrecedence(Precedence::PREC_AND, scanner, compiler, vm);
+        self.parsePrecedence(Precedence::PREC_AND, scanner, vm);
         self.patchJump(endJump);
     }
     
-    fn or(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler, canAssign: bool){
+    fn or(&mut self, scanner: &mut Scanner, vm: &mut VM, canAssign: bool){
         let elseJump = self.emitJump(OpCode::OP_JUMP_IF_FALSE);
         let endJump = self.emitJump(OpCode::OP_JUMP);
         self.patchJump(elseJump);
         self.emitByte(OpCode::OP_POP as u8);
-        self.parsePrecedence(Precedence::PREC_OR, scanner, compiler, vm);
+        self.parsePrecedence(Precedence::PREC_OR, scanner,vm);
         self.patchJump(endJump);
     }
 
-    fn literal(&mut self, _scanner: &mut Scanner, _vm: &mut VM, _compiler: &mut Compiler, _canAssign: bool){
+    fn literal(&mut self, _scanner: &mut Scanner, _vm: &mut VM,_canAssign: bool){
         match self.previous.ttype {
             TokenType::TOKEN_FALSE => {self.emitByte(OpCode::OP_FALSE as u8); ()},
             TokenType::TOKEN_TRUE => {self.emitByte(OpCode::OP_TRUE as u8); ()},
@@ -473,7 +481,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         } 
     }
 
-    fn string(&mut self, _scanner: &mut Scanner, _vm: &mut VM, _compiler: &mut Compiler, _canAssign: bool){
+    fn string(&mut self, _scanner: &mut Scanner, _vm: &mut VM, _canAssign: bool){
         let quoted = self.previous.start.clone();
         let len = quoted.len();
         // trim of quotes
@@ -483,15 +491,15 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         self.emitConstant(data); 
     }
 
-    fn variable(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler, canAssign: bool){
-        self.namedVariable(self.previous.clone(), scanner, vm, compiler,canAssign);
+    fn variable(&mut self, scanner: &mut Scanner, vm: &mut VM,canAssign: bool){
+        self.namedVariable(self.previous.clone(), scanner, vm, canAssign);
     }
 
-    fn namedVariable(&mut  self, name: Token, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler, canAssign: bool){
+    fn namedVariable(&mut  self, name: Token, scanner: &mut Scanner, vm: &mut VM,canAssign: bool){
         let getOp: OpCode;
         let setOp: OpCode;
         // decide if variable is local or global, and choose the appropriate opcodes
-        let arg  = match self.resolveLocal(compiler, name.clone()){
+        let arg  = match self.resolveLocal(name.clone()){
             Some(index) => {
                 getOp = OpCode::OP_GET_LOCAL;
                 setOp = OpCode::OP_SET_LOCAL;
@@ -505,19 +513,19 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         };
 
         if self.Match(scanner, vm, TokenType::TOKEN_EQUAL) && canAssign{
-            self.expression(scanner, vm, compiler);
+            self.expression(scanner, vm);
             self.emitTwoBytes(setOp as u8, arg);
         }
         self.emitTwoBytes(getOp as u8, arg);
     }
 
-    fn resolveLocal(&mut self, comp: &mut Compiler, name: Token) -> Option<u8>{
-        let mut index: isize =  (comp.localCount as isize) -1;
+    fn resolveLocal(&mut self, name: Token) -> Option<u8>{
+        let mut index: isize =  (self.compiler.localCount as isize) -1;
         loop {
             if index < 0 {
                 break;
             }
-            let local = comp.locals.get(index as usize).unwrap();
+            let local = self.compiler.locals.get(index as usize).unwrap();
             if local.name.EqualSemantically(name.clone()) {
                 if local.depth.is_none() {
                     self.errorAt("Can't read local variable in it's own initializer".to_string(), ErrorTokenLoc::PREVIOUS);
@@ -530,7 +538,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
     }
     
 // the function that handles precedence and allows recursion to occur
-    fn parsePrecedence(&mut self, init_precedence: Precedence, scanner: &mut Scanner, compiler: &mut Compiler, vm: &mut VM){
+    fn parsePrecedence(&mut self, init_precedence: Precedence, scanner: &mut Scanner,vm: &mut VM){
         self.advance(scanner, vm);
         let canAssign: bool;
         // Check if a prefix operation needs to be performed
@@ -541,7 +549,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
                     // after unwrapping everything, execute the prefix function
                     Some(prefix_func) => {
                         canAssign = init_precedence <= Precedence::PREC_ASSIGNMENT;
-                        prefix_func(self, scanner, vm, compiler, canAssign);
+                        prefix_func(self, scanner, vm, canAssign);
                     },
                     None => {
                         self.errorAt("Expect expression".to_string(), ErrorTokenLoc::PREVIOUS);
@@ -583,7 +591,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
             };
 
             match prev_rule.infix {
-                Some(function) => function(self, scanner, vm, compiler, canAssign),
+                Some(function) => function(self, scanner, vm,canAssign),
                 None => {
                     self.errorAt("Invalid infix rule".to_string(), ErrorTokenLoc::PREVIOUS);
                     return;
@@ -596,27 +604,27 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         }
     }
 
-    fn parseVariable(&mut self, err_msg: String, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler) -> u8{
+    fn parseVariable(&mut self, err_msg: String, scanner: &mut Scanner, vm: &mut VM, ) -> u8{
         self.consume(TokenType::TOKEN_IDENTIFIER, err_msg, scanner, vm); 
-        self.declareVariable(compiler);
-        if compiler.scopeDepth > 0 {return 0;}
+        self.declareVariable();
+        if self.compiler.scopeDepth > 0 {return 0;}
         return self.identifierConstant(self.previous.clone())
     }
 
-    fn defineVariable(&mut self, global: u8, compiler: &mut Compiler){
-        if compiler.scopeDepth > 0{
-            compiler.markInitialized();
+    fn defineVariable(&mut self, global: u8, ){
+        if self.compiler.scopeDepth > 0{
+            self.compiler.markInitialized();
             return; 
         }
         self.emitTwoBytes(OpCode::OP_DEFINE_GLOBAL as u8, global);
     }
 
-    fn declareVariable(&mut self, compiler: &mut Compiler){
-        if compiler.scopeDepth  == 0 {return ;}
-        let sd = compiler.scopeDepth;
-        let new_local: Locals = Locals::new(self.previous.clone(), Some(compiler.scopeDepth));
-        for index in  (0..compiler.localCount).rev(){
-            let local = compiler.locals.get(index as usize).unwrap();
+    fn declareVariable(&mut self, ){
+        if self.compiler.scopeDepth  == 0 {return ;}
+        let sd = self.compiler.scopeDepth;
+        let new_local: Locals = Locals::new(self.previous.clone(), Some(self.compiler.scopeDepth));
+        for index in  (0..self.compiler.localCount).rev(){
+            let local = self.compiler.locals.get(index as usize).unwrap();
             if local.depth.unwrap() < sd{
                 break;
             }
@@ -624,13 +632,13 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
                 self.errorAt("Already variable with this name in this scope".to_string(), ErrorTokenLoc::PREVIOUS);
             }
         }
-        self.addLocal(compiler, new_local);
+        self.addLocal( new_local);
     }
 
-    fn addLocal(&mut self, compiler: &mut Compiler, mut new_local: Locals){
+    fn addLocal(&mut self, mut new_local: Locals){
         new_local.depth = None;
-        compiler.localCount += 1;
-        compiler.locals.push(new_local);
+        self.compiler.localCount += 1;
+        self.compiler.locals.push(new_local);
     }
 
     fn identifierConstant(&mut self, name: Token) -> u8{
@@ -639,7 +647,7 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         self.makeConstant(val)
     }
 
-    fn getRule(&mut self, ttype: TokenType)  -> Option<ParseRule<'a,'b>>{
+    fn getRule(&mut self, ttype: TokenType)  -> Option<ParseRule>{
         // return the corresponding parseRule for a given token from the lookup table
         let index = ttype as usize;
         match self.rule_table.get(index){
@@ -706,7 +714,10 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
     }
     
     fn currentChunk(&mut self) -> &mut Chunk{
-        self.compiling_chunk
+        match & mut self.compiler.function {
+            None => panic!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+            Some(fnc) => {&mut fnc.chunk}
+        }
     }
 
     fn errorAt(&mut self, msg: String, which_token: ErrorTokenLoc){
@@ -762,11 +773,11 @@ impl <'a,'b> Parser<'a,'b> where 'a: 'b{
         }
     }
    
-    fn block(&mut self, scanner: &mut Scanner, vm: &mut VM, compiler: &mut Compiler){
+    fn block(&mut self, scanner: &mut Scanner, vm: &mut VM, ){
         loop {
             let cond = self.isAtEnd() || self.check(TokenType::TOKEN_RIGHT_BRACE); 
             if cond {break;}
-            self.declaration(scanner, vm, compiler);
+            self.declaration(scanner, vm);
         }
         self.consume(TokenType::TOKEN_RIGHT_BRACE, "Expect '}' after block.".to_string(), scanner, vm);
     }

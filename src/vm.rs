@@ -31,11 +31,9 @@ impl VM {
     
     pub fn interpret(&mut self, source: &String) -> InterpretResult { 
         let mut scanner = Scanner::new(source.to_string());
-        let mut cnk = Chunk::new();
-        let mut parser = Parser::new(&mut cnk);
-        let mut comp = Compiler::new();
+        let mut parser = Parser::new();
         // compile() returns false if an error occurred.
-        if !parser.compile(&mut scanner, &mut comp, self){
+        if !parser.compile(&mut scanner, self){
             return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string());
         }
         self.chunk = cnk;

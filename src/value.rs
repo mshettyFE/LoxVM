@@ -67,6 +67,7 @@ pub fn valuesEqual(a: Value, b: Value) -> bool{
                     let b_val = b_obj.any().downcast_ref::<LoxString>().unwrap().val.clone();
                     return a_val == b_val;
                 },
+                _ => panic!("Can't compare functions")
             }
         } else{
             return false;
