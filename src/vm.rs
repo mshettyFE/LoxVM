@@ -45,13 +45,15 @@ impl VM {
         let mut scanner = Scanner::new(source.to_string());
         self.parser = crate::compiler::Parser::new();
         // compile() returns false if an error occurred.
-        if !self.parser.compile(&mut scanner){
-            return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string());
+        match self.parser.compile(&mut scanner){
+            None => return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string()),
+            Some(fnc) => {
+                self.chunk = Some(self.parser.currentChunk());
+                self.ip = 0;
+                let res = self.run();
+                return res;
+            }
         }
-        self.chunk = Some(self.parser.currentChunk());
-        self.ip = 0;
-        let res = self.run();
-        return res;
     }
 
     fn run(&mut self) -> InterpretResult {

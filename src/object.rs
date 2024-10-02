@@ -20,7 +20,7 @@ pub trait Obj {
 pub struct LoxFunction{
     pub arity: usize,
     pub chunk: Rc<RefCell<Chunk>>,
-    name: Option<LoxString>,
+    pub name: Option<LoxString>,
 }
 
 impl Obj for LoxFunction {
@@ -35,7 +35,7 @@ impl Obj for LoxFunction {
     fn print_obj(&self){
         match &self.name {
             Some(v) => print!("<fn {}>", v.val),
-            None => print!("<fn null>")
+            None => print!("<script>")
         }
     }
 }

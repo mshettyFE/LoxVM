@@ -6,7 +6,6 @@ use crate::scanner::{Token, TokenType, Scanner};
 use crate::chunk::{Chunk, OpCode};
 use crate::value::Value;
 use crate::DEBUG_PRINT_CODE;
-use crate::vm::VM;
 use std::mem;
 
 // size of ParseRules lookup table
@@ -19,7 +18,7 @@ pub enum FunctionType {
 
 
 pub struct Compiler {
-    function: LoxFunction,
+    function: Option<Rc<RefCell<LoxFunction>>>,
     ftype: FunctionType,
     locals: Vec<Locals>, // a stack of local variables that are accessible in the current scope
     localCount: u64, // a count of the number of variables accessible in the current scope
@@ -28,7 +27,7 @@ pub struct Compiler {
 
 impl Compiler {
     pub fn new() -> Self{
-        Compiler{function: LoxFunction::new(0, None), ftype: FunctionType::TYPE_SCRIPT  ,locals: Vec::new(), localCount: 0, scopeDepth: 0}
+        Compiler{function: Some(Rc::new(RefCell::new(LoxFunction::new(0, None)))), ftype: FunctionType::TYPE_SCRIPT  ,locals: Vec::new(), localCount: 0, scopeDepth: 0}
     }
 
     pub fn beginScope(&mut self){
@@ -192,7 +191,7 @@ impl Parser{
         rule_table: *rules,
     }
   }
-    pub fn compile(&mut self, scanner: &mut Scanner) -> bool{
+    pub fn compile(&mut self, scanner: &mut Scanner) -> Option<Rc<RefCell<LoxFunction>>>{
         // interface of parser. Give it a scanner, and it will chew through the tokens, spitting
         // out byte code
         // returns false if an error has occurred
@@ -205,8 +204,11 @@ impl Parser{
         }
         // last token needs to be EOF, otherwise, we have problems
         self.consume(TokenType::TOKEN_EOF, "Expected end of expression.".to_string(), scanner);
-        self.endParser();
-        return !self.hadError;
+        let out = self.endParser();
+        match self.hadError {
+            true => None,
+            false => out
+        }
     }
 
     fn advance(&mut self, scanner: &mut Scanner){
@@ -243,14 +245,23 @@ impl Parser{
         self.errorAt(err_msg, ErrorTokenLoc::CURRENT);
     }
  
-    fn endParser(&mut self){
+    fn endParser(&mut self) -> Option<Rc<RefCell<LoxFunction>>>{
         // tops off chunk with return, and then disassembles if prompted
         self.emitReturn();
+        let function = self.compiler.function.clone();
         if *DEBUG_PRINT_CODE.get().unwrap(){
             if !self.hadError{
-                let _ = self.currentChunk().borrow().disassemble("code".to_string());
+                let msg = match &function {
+                    Some(fnc) => match &fnc.borrow().name {
+                        Some(v) => v.val.clone(),
+                        None => "<script>".to_string(),
+                    }
+                    None => panic!("Couldn't load function")
+                };
+                let _ = self.currentChunk().borrow().disassemble(msg);
             }
         }
+        return function
     }
 
 
@@ -714,7 +725,12 @@ impl Parser{
     }
     
     pub fn currentChunk(&mut self) -> Rc<RefCell<Chunk>>{
-        self.compiler.function.chunk.clone()
+        match &self.compiler.function{
+            Some(fnc) => {
+                return fnc.borrow_mut().chunk.clone()
+            },
+            None => panic!("Couldn't load function")
+        }
     }
 
     fn errorAt(&mut self, msg: String, which_token: ErrorTokenLoc){
