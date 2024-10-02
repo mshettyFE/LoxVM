@@ -1,6 +1,8 @@
 #![allow(non_camel_case_types)]
 use std::{cell::RefCell};
 use std::rc::Rc;
+
+use crate::object::LoxFunction;
 use crate::{chunk::{Chunk, OpCode}, object::LoxString, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use crate:: stack::LoxStack;
 use crate::value::*;
@@ -15,28 +17,38 @@ pub enum InterpretResult {
     INTERPRET_RUNTIME_ERROR(String),
 }
 
-pub struct VM {
-    chunk: Chunk, // currently executing chunk
+pub struct CallFrame{
+    func: Option<LoxFunction>,
+    ip: usize,
+    slot: usize
+}
+
+
+
+pub struct VM{
+    chunk: Option<Rc<RefCell<Chunk>>>, // currently executing chunk
     ip: usize, // index into code section of chunk denoting the next instruction to execute
     stk: LoxStack, // value stack 
     globals: LoxTable,                                    // global vars
+    parser: Parser
 }
 
 impl VM {
     pub fn new() -> Self{
-        return VM{chunk: Chunk::new(), ip: 0, 
+        return VM{chunk: None, ip: 0, 
         globals: LoxTable::new(),
-        stk: LoxStack::new()};
+        stk: LoxStack::new(),
+        parser: Parser::new()};
     }
     
     pub fn interpret(&mut self, source: &String) -> InterpretResult { 
         let mut scanner = Scanner::new(source.to_string());
-        let mut parser = Parser::new();
+        self.parser = crate::compiler::Parser::new();
         // compile() returns false if an error occurred.
-        if !parser.compile(&mut scanner, self){
+        if !self.parser.compile(&mut scanner){
             return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string());
         }
-        self.chunk = cnk;
+        self.chunk = Some(self.parser.currentChunk());
         self.ip = 0;
         let res = self.run();
         return res;
@@ -49,7 +61,10 @@ impl VM {
                  Some(val) => {
                      if *val {
                         self.stk.print();
-                         _ = self.chunk.disassemble_instruction(self.ip);
+                        match &self.chunk {
+                            Some(cnk) => {let _ =  cnk.borrow().disassemble_instruction(self.ip); ()},
+                            None => panic!("AAAAAAAAA")
+                        }
                      }
                  }
                  None => panic!("DEBUG_TRACE_EXEC is somehow empty"),
@@ -97,11 +112,17 @@ impl VM {
                         Ok(val) => val,
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
                     };
-                    let constant = match self.chunk.get_constant(usize::from(constant_index)){
-                        Some(val) => val,
-                        None => return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Couldn't access constant at address {}", constant_index))
+                    let constant: Value;
+                    match &self.chunk {
+                        Some(cnk) => {
+                            match cnk.borrow().get_constant(usize::from(constant_index)) {
+                                Some(val) => constant =  val.clone(),
+                                None => return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Couldn't access constant at address {}", constant_index))
+                            }
+                        },
+                        None => panic!("AAAAAAAAAA")
                     };
-                    self.stk.push(constant.clone());
+                   self.stk.push(constant.clone());
                },
                OpCode::OP_NIL => {
                     self.stk.push(Value::VAL_NIL)
@@ -134,11 +155,17 @@ impl VM {
                         Ok(val) => val,
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
                     };
-                    let name = match self.chunk.get_constant(usize::from(constant_index)){
-                        Some(val) => val,
-                        None => return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Couldn't access constant at address {}", constant_index))
-                    }; 
-                    let key: LoxString;
+                    let name: Value;
+                    match &self.chunk {
+                        Some(cnk) => {
+                            match cnk.borrow().get_constant(usize::from(constant_index)) {
+                                Some(val) => name =  val.clone(),
+                                None => return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Couldn't access constant at address {}", constant_index))
+                            }
+                        },
+                        None => panic!("AAAAAAAAAA")
+                    }
+                   let key: LoxString;
                     match name {
                         Value::VAL_OBJ(pointer_stuff) => {
                             let ptr = pointer_stuff.borrow();
@@ -163,11 +190,17 @@ impl VM {
                         Ok(val) => val,
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
                     };
-                    let name = match self.chunk.get_constant(usize::from(constant_index)){
-                        Some(val) => val,
-                        None => return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Couldn't access constant at address {}", constant_index))
+                    let name: Value;
+                    match &self.chunk {
+                        Some(cnk) => {
+                            match cnk.borrow().get_constant(usize::from(constant_index)) {
+                                Some(val) => name = val.clone(),
+                                None => return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Couldn't access constant at address {}", constant_index))
+                            }
+                        },
+                        None => panic!("AAAAAAAAAA")
                     };
-                    match name {
+                   match name {
                         Value::VAL_OBJ(pointer_stuff) => {
                                let ptr = pointer_stuff.borrow();
                                let key = ptr.any().downcast_ref::<LoxString>().unwrap();
@@ -184,9 +217,15 @@ impl VM {
                         Ok(val) => val,
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
                     };
-                    let name = match self.chunk.get_constant(usize::from(constant_index)){
-                        Some(val) => val,
-                        None => return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Couldn't access constant at address {}", constant_index))
+                    let name: Value;
+                    match &self.chunk{
+                        Some(cnk) => {
+                            match cnk.borrow().get_constant(usize::from(constant_index)) {
+                                Some(val) => name = val.clone(),
+                                None => return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Couldn't access constant at address {}", constant_index))
+                            }
+                        },
+                        None => panic!("AAAAAAAAAA")
                     };
                     match name {
                         Value::VAL_OBJ(pointer_stuff) => {
@@ -361,15 +400,20 @@ impl VM {
     }
 
     fn read_byte(&mut self) -> Result<u8, String> {
-        let output: Result<u8,String> = match self.chunk.get_instr(self.ip){
-            Some(val) => Ok(*val),
-            None => {
-                let err_msg = format!("Out of bounds access of code: {}", self.ip);
-//                panic!("{}",err_msg);
-                Err(err_msg)
-            }
-        };
-        self.ip += 1;
+        let output: Result<u8,String>;
+        match &self.chunk {
+            Some(cnk) => {
+                match cnk.borrow().get_instr(self.ip) {
+                    Some(val) => output = Ok(*val),
+                    None => {
+                    let err_msg = format!("Out of bounds access of code: {}", self.ip);
+                    output = Err(err_msg)
+                    }
+                }
+            },
+            None => panic!("AAAAAAAAAAAA"),
+        }
+       self.ip += 1;
         return output;
     }
  
@@ -392,7 +436,16 @@ impl VM {
         let err_msg = format!("{}",formatted_message);
         // ip points to the NEXT instruction to be executed, so need to decrement ip by 1
         let instruction = self.ip-1;
-        let line = self.chunk.get_line(instruction).unwrap();
+        let line: usize;
+        match &self.chunk {
+            Some(cnk) => {
+                match cnk.borrow().get_line(instruction) {
+                    Some(val) => line = *val,
+                    None => panic!("AAAAA"),
+                }
+            },
+            None => panic!("AAAAAA"),
+        }
         let line_err = format!("[line {}] in script\n", line);
         self.stk.reset();
         return format!("{}{}", err_msg,line_err);
@@ -400,8 +453,24 @@ impl VM {
 
     fn read_short(&mut self) -> u16{
         self.ip += 2;
-       let higher_byte: u8 = *self.chunk.get_instr(self.ip-2).unwrap();
-       let lower_byte: u8 = *self.chunk.get_instr(self.ip-1).unwrap();
-       ((higher_byte as u16)  << (8 as u16)) | lower_byte as u16
+        let higher_byte = match &self.chunk {
+            Some(cnk) => {
+                match cnk.borrow().get_instr(self.ip-2) {
+                    Some(val) => *val,
+                    None => panic!("AAAAA"),
+                }
+            },
+            None => panic!("AAAAAA"),
+        };
+         let lower_byte = match &self.chunk {
+            Some(cnk) => {
+                match cnk.borrow().get_instr(self.ip-2) {
+                    Some(val) => *val,
+                    None => panic!("AAAAA"),
+                }
+            },
+            None => panic!("AAAAAA"),
+        };
+      ((higher_byte as u16)  << (8 as u16)) | lower_byte as u16
     }
 }

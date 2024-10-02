@@ -1,5 +1,8 @@
 #![allow(non_camel_case_types)]
 use std::any::Any;
+use std::rc::Rc;
+
+use std::cell::RefCell;
 use crate::chunk::Chunk;
 
 #[derive(Clone, PartialEq, Debug)]
@@ -16,8 +19,8 @@ pub trait Obj {
 
 pub struct LoxFunction{
     pub arity: usize,
-    pub chunk: Chunk,
-    name: LoxString,
+    pub chunk: Rc<RefCell<Chunk>>,
+    name: Option<LoxString>,
 }
 
 impl Obj for LoxFunction {
@@ -30,13 +33,16 @@ impl Obj for LoxFunction {
         self
     }
     fn print_obj(&self){
-        print!("<fn {}", self.name.val)
+        match &self.name {
+            Some(v) => print!("<fn {}>", v.val),
+            None => print!("<fn null>")
+        }
     }
 }
 
 impl LoxFunction {
-    pub fn new(n_arity: usize, new_name: LoxString) -> Self{
-        LoxFunction{arity: n_arity, chunk: Chunk::new(), name: new_name}        
+    pub fn new(n_arity: usize, new_name: Option<LoxString>) -> Self{
+        LoxFunction{arity: n_arity, chunk: Rc::new(RefCell::new( Chunk::new())), name: new_name}
     }
 }
 
