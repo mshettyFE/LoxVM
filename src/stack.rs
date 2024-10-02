@@ -21,6 +21,10 @@ impl LoxStack {
         return self.stk.pop();
     }
 
+    pub fn size(&self) -> usize{
+        self.stk.len()
+    }
+
     pub fn peek(&self, distance: usize) -> Option<Value>{
         // distance denotes how far from the top of the stack you want to peek
         // a distance of 0 means you want the top
