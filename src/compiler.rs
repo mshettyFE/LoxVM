@@ -1,7 +1,8 @@
 #![allow(non_camel_case_types)]
 use std::rc::Rc;
 use std::cell::RefCell;
-use crate::object::{LoxFunction, LoxString};
+use crate::compiler_stack::CompilerStack;
+use crate::object::{LoxFunction, LoxString, Obj, ObjType};
 use crate::scanner::{Token, TokenType, Scanner};
 use crate::chunk::{Chunk, OpCode};
 use crate::value::Value;
@@ -26,8 +27,14 @@ pub struct Compiler {
 }
 
 impl Compiler {
-    pub fn new() -> Self{
-        Compiler{function: Some(Rc::new(RefCell::new(LoxFunction::new(0, None)))), ftype: FunctionType::TYPE_SCRIPT  ,locals: Vec::new(), localCount: 0, scopeDepth: 0}
+    pub fn new(new_ftype: FunctionType) -> Self{
+        Compiler{
+            function: Some(Rc::new(RefCell::new(LoxFunction::new(0, None)))),
+            ftype: new_ftype,
+            locals: Vec::new(),
+            localCount: 0,
+            scopeDepth: 0
+        }
     }
 
     pub fn beginScope(&mut self){
@@ -39,6 +46,7 @@ impl Compiler {
     }
     
     fn markInitialized(& mut self) {
+        if (self.scopeDepth == 0 ) {return}
         // utilized to prevent self-initialization (ie. var a = a; type of thing).
         // Use option as a sentinel value
         self.locals.get_mut((self.localCount) as usize -1).unwrap().depth = 
@@ -61,7 +69,7 @@ impl Locals {
 // requests tokens as needed from a scanner, then converts them too bytecode
 // It's basically as single pass compiler
 pub struct Parser{
-    compiler: Compiler, // current chunk being executed. Could represent a function, or
+    compilerStack: CompilerStack, // current chunk being executed. Could represent a function, or
                                     // a group of statements
     // the tokens under consideration
     current: Token,                 
@@ -183,7 +191,7 @@ impl Parser{
  rules[TokenType::TOKEN_ERROR as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_EOF as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
     
- Parser{compiler: Compiler::new(), 
+ Parser{compilerStack: CompilerStack::new(), 
         previous: Token {ttype: TokenType::TOKEN_ERROR, start: "".to_string(), line: 0 },
         current: Token { ttype: TokenType::TOKEN_ERROR, start: "".to_string(), line: 0 },
         hadError: false,
@@ -248,7 +256,7 @@ impl Parser{
     fn endParser(&mut self) -> Option<Rc<RefCell<LoxFunction>>>{
         // tops off chunk with return, and then disassembles if prompted
         self.emitReturn();
-        let function = self.compiler.function.clone();
+        let function = self.compilerStack.peek_mut().unwrap().function.clone();
         if *DEBUG_PRINT_CODE.get().unwrap(){
             if !self.hadError{
                 let msg = match &function {
@@ -261,7 +269,9 @@ impl Parser{
                 let _ = self.currentChunk().borrow().disassemble(msg);
             }
         }
-        return function
+        // move up to new compiler
+        self.compilerStack.pop();
+       return function
     }
 
 
@@ -270,7 +280,10 @@ impl Parser{
 // These are effectively translating the BNF notation of Lox into code
 
     fn declaration(&mut self, scanner: &mut Scanner, ){
-        if self.Match(scanner, TokenType::TOKEN_VAR){
+        if self.Match(scanner, TokenType::TOKEN_FUN){
+            self.funDeclaration(scanner);
+        }
+        else if self.Match(scanner, TokenType::TOKEN_VAR){
             self.varDeclaration(scanner);
         } else {
             self.statement(scanner); 
@@ -290,6 +303,13 @@ impl Parser{
         self.consume(TokenType::TOKEN_SEMICOLON, "Expect ';' after variable declaration.".to_string(), scanner);
         self.defineVariable(global);
     }
+
+    fn funDeclaration(&mut self, scanner: &mut Scanner){
+        let global = self.parseVariable("Expect function name.".to_string(), scanner);
+        self.compilerStack.peek_mut().unwrap().markInitialized();
+        self.function(FunctionType::TYPE_FUNCTION, scanner);
+        self.defineVariable(global);
+    }
     
     fn statement(&mut self, scanner: &mut Scanner ){
         if self.Match(scanner, TokenType::TOKEN_PRINT){
@@ -303,17 +323,18 @@ impl Parser{
             self.whileStatement(scanner);
         } 
         else if self.Match(scanner, TokenType::TOKEN_LEFT_BRACE){
-            self.compiler.beginScope();
+            self.compilerStack.peek_mut().unwrap().beginScope();
             self.block(scanner);
-            self.compiler.endScope();
+            self.compilerStack.peek_mut().unwrap().endScope();
             loop {
-                if self.compiler.localCount == 0 {
+                if self.compilerStack.peek_mut().unwrap().localCount == 0 {
                     break;
                 }
-                let var_depth = self.compiler.locals.get( (self.compiler.localCount-1) as usize ).unwrap().depth;
-                if var_depth.unwrap() > self.compiler.scopeDepth {
+                let cur_comp = self.compilerStack.peek_mut().unwrap();
+                let var_depth = cur_comp.locals.get( (cur_comp.localCount-1) as usize ).unwrap().depth;
+                if var_depth.unwrap() > self.compilerStack.peek_mut().unwrap().scopeDepth {
                     self.emitByte(OpCode::OP_POP as u8);
-                    self.compiler.localCount -= 1;
+                    self.compilerStack.peek_mut().unwrap().localCount -= 1;
                     continue;
                 }
                 break;
@@ -338,7 +359,7 @@ impl Parser{
 
     fn forStatement(&mut self, scanner: &mut Scanner){
 // Out of bounds problem here        
-        self.compiler.beginScope(); 
+        self.compilerStack.peek_mut().unwrap().beginScope(); 
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'for'.".to_string(), scanner);
         if self.Match(scanner, TokenType::TOKEN_SEMICOLON){}
         else if self.Match(scanner, TokenType::TOKEN_VAR){
@@ -382,7 +403,7 @@ impl Parser{
             None => ()
         }
 
-        self.compiler.endScope();
+        self.compilerStack.peek_mut().unwrap().endScope();
 
     }
 
@@ -531,12 +552,12 @@ impl Parser{
     }
 
     fn resolveLocal(&mut self, name: Token) -> Option<u8>{
-        let mut index: isize =  (self.compiler.localCount as isize) -1;
+        let mut index: isize =  (self.compilerStack.peek_mut().unwrap().localCount as isize) -1;
         loop {
             if index < 0 {
                 break;
             }
-            let local = self.compiler.locals.get(index as usize).unwrap();
+            let local = self.compilerStack.peek_mut().unwrap().locals.get(index as usize).unwrap();
             if local.name.EqualSemantically(name.clone()) {
                 if local.depth.is_none() {
                     self.errorAt("Can't read local variable in it's own initializer".to_string(), ErrorTokenLoc::PREVIOUS);
@@ -618,24 +639,24 @@ impl Parser{
     fn parseVariable(&mut self, err_msg: String, scanner: &mut Scanner ) -> u8{
         self.consume(TokenType::TOKEN_IDENTIFIER, err_msg, scanner); 
         self.declareVariable();
-        if self.compiler.scopeDepth > 0 {return 0;}
+        if self.compilerStack.peek_mut().unwrap().scopeDepth > 0 {return 0;}
         return self.identifierConstant(self.previous.clone())
     }
 
     fn defineVariable(&mut self, global: u8, ){
-        if self.compiler.scopeDepth > 0{
-            self.compiler.markInitialized();
+        if self.compilerStack.peek_mut().unwrap().scopeDepth > 0{
+            self.compilerStack.peek_mut().unwrap().markInitialized();
             return; 
         }
         self.emitTwoBytes(OpCode::OP_DEFINE_GLOBAL as u8, global);
     }
 
     fn declareVariable(&mut self, ){
-        if self.compiler.scopeDepth  == 0 {return ;}
-        let sd = self.compiler.scopeDepth;
-        let new_local: Locals = Locals::new(self.previous.clone(), Some(self.compiler.scopeDepth));
-        for index in  (0..self.compiler.localCount).rev(){
-            let local = self.compiler.locals.get(index as usize).unwrap();
+        if self.compilerStack.peek_mut().unwrap().scopeDepth  == 0 {return ;}
+        let sd = self.compilerStack.peek_mut().unwrap().scopeDepth;
+        let new_local: Locals = Locals::new(self.previous.clone(), Some(self.compilerStack.peek_mut().unwrap().scopeDepth));
+        for index in  (0..self.compilerStack.peek_mut().unwrap().localCount).rev(){
+            let local = self.compilerStack.peek_mut().unwrap().locals.get(index as usize).unwrap();
             if local.depth.unwrap() < sd{
                 break;
             }
@@ -648,8 +669,8 @@ impl Parser{
 
     fn addLocal(&mut self, mut new_local: Locals){
         new_local.depth = None;
-        self.compiler.localCount += 1;
-        self.compiler.locals.push(new_local);
+        self.compilerStack.peek_mut().unwrap().localCount += 1;
+        self.compilerStack.peek_mut().unwrap().locals.push(new_local);
     }
 
     fn identifierConstant(&mut self, name: Token) -> u8{
@@ -725,7 +746,7 @@ impl Parser{
     }
     
     pub fn currentChunk(&mut self) -> Rc<RefCell<Chunk>>{
-        match &self.compiler.function{
+        match &self.compilerStack.peek_mut().unwrap().function{
             Some(fnc) => {
                 return fnc.borrow_mut().chunk.clone()
             },
@@ -793,6 +814,30 @@ impl Parser{
             self.declaration(scanner);
         }
         self.consume(TokenType::TOKEN_RIGHT_BRACE, "Expect '}' after block.".to_string(), scanner);
+    }
+
+    fn function(&mut self, ftype: FunctionType, scanner: &mut Scanner){
+/*
+ * self.compilerStack.push(Compiler::new(ftype));
+        let cur_comp = self.compilerStack.peek_mut().unwrap();
+        cur_comp.beginScope();
+        // declaration
+        self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after function name.".to_string(), scanner);
+        if (! self.check(TokenType::TOKEN_RIGHT_PAREN)){
+            while (self.Match(scanner, TokenType::TOKEN_COMMA)){
+                cur_comp.function.unwrap().borrow_mut().arity += 1; 
+            }
+        }
+        self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after function name.".to_string(), scanner);
+
+        //body
+        self.consume(TokenType::TOKEN_LEFT_BRACE, "Expect '{' before function body.".to_string(), scanner);
+
+        let func = self.endParser();
+        let new_val = Value::VAL_OBJ(func.unwrap());
+        let b = self.makeConstant(new_val);
+        self.emitTwoBytes(OpCode::OP_CONSTANT as u8, b);
+*/
     }
 
     fn isAtEnd(&mut self) -> bool{
