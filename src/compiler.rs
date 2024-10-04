@@ -2,7 +2,7 @@
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::compiler_stack::CompilerStack;
-use crate::object::{LoxFunction, LoxString, Obj, ObjType};
+use crate::object::{LoxFunction, LoxString};
 use crate::scanner::{Token, TokenType, Scanner};
 use crate::chunk::{Chunk, OpCode};
 use crate::value::Value;
@@ -19,7 +19,7 @@ pub enum FunctionType {
 
 
 pub struct Compiler {
-    function: Option<Rc<RefCell<LoxFunction>>>,
+    pub function: Option<LoxFunction>,
     ftype: FunctionType,
     locals: Vec<Locals>, // a stack of local variables that are accessible in the current scope
     localCount: u64, // a count of the number of variables accessible in the current scope
@@ -29,7 +29,7 @@ pub struct Compiler {
 impl Compiler {
     pub fn new(new_ftype: FunctionType) -> Self{
         Compiler{
-            function: Some(Rc::new(RefCell::new(LoxFunction::new(0, None)))),
+            function: Some(LoxFunction::new(0, None)),
             ftype: new_ftype,
             locals: Vec::new(),
             localCount: 0,
@@ -44,7 +44,7 @@ impl Compiler {
     pub fn endScope(&mut self){
         self.scopeDepth -= 1;
     }
-    
+   
     fn markInitialized(& mut self) {
         if (self.scopeDepth == 0 ) {return}
         // utilized to prevent self-initialization (ie. var a = a; type of thing).
@@ -199,7 +199,7 @@ impl Parser{
         rule_table: *rules,
     }
   }
-    pub fn compile(&mut self, scanner: &mut Scanner) -> Option<Rc<RefCell<LoxFunction>>>{
+    pub fn compile(&mut self, scanner: &mut Scanner) -> Option<Compiler>{
         // interface of parser. Give it a scanner, and it will chew through the tokens, spitting
         // out byte code
         // returns false if an error has occurred
@@ -253,25 +253,25 @@ impl Parser{
         self.errorAt(err_msg, ErrorTokenLoc::CURRENT);
     }
  
-    fn endParser(&mut self) -> Option<Rc<RefCell<LoxFunction>>>{
+    fn endParser(&mut self) -> Option<Compiler>{
         // tops off chunk with return, and then disassembles if prompted
         self.emitReturn();
-        let function = self.compilerStack.peek_mut().unwrap().function.clone();
+        let function = &self.compilerStack.peek_mut().unwrap().function;
         if *DEBUG_PRINT_CODE.get().unwrap(){
             if !self.hadError{
                 let msg = match &function {
-                    Some(fnc) => match &fnc.borrow().name {
+                    Some(fnc) => match &fnc.name {
                         Some(v) => v.val.clone(),
                         None => "<script>".to_string(),
                     }
                     None => panic!("Couldn't load function")
                 };
-                let _ = self.currentChunk().borrow().disassemble(msg);
+                let _ = self.currentChunk().disassemble(msg);
             }
         }
         // move up to new compiler
-        self.compilerStack.pop();
-       return function
+        let out = self.compilerStack.pop();
+       return out;
     }
 
 
@@ -369,7 +369,7 @@ impl Parser{
         }
         
 
-        let mut loopStart = self.currentChunk().borrow().get_count();
+        let mut loopStart = self.currentChunk().get_count();
 
         let exitJump: Option<usize>;
         if !self.Match(scanner, TokenType::TOKEN_SEMICOLON) {
@@ -384,7 +384,7 @@ impl Parser{
         
         if  !self.Match(scanner, TokenType::TOKEN_RIGHT_PAREN) {
             let bodyJump = self.emitJump(OpCode::OP_JUMP);
-            let incrementStart = self.currentChunk().borrow().get_count();
+            let incrementStart = self.currentChunk().get_count();
             self.expression(scanner);
             self.emitByte(OpCode::OP_POP as u8);
             self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after 'for'.".to_string(), scanner);
@@ -426,7 +426,7 @@ impl Parser{
 
     fn whileStatement(&mut self, scanner: &mut Scanner){
 // Out of bounds problem here        
-        let loopStart = self.currentChunk().borrow().get_count();
+        let loopStart = self.currentChunk().get_count();
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'while'.".to_string(), scanner);
         self.expression(scanner);
         self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after 'while'.".to_string(), scanner);
@@ -691,7 +691,7 @@ impl Parser{
     fn emitByte(&mut self, new_byte: u8){
         // add a byte to the current chunk
         let line = self.previous.line;
-        self.currentChunk().borrow_mut().write_chunk(new_byte, line);
+        self.currentChunk().write_chunk(new_byte, line);
     }
 
     fn emitTwoBytes(&mut self, byte1: u8, byte2: u8){
@@ -707,7 +707,7 @@ impl Parser{
     }
 
     fn makeConstant(&mut self, new_val: Value) -> u8{
-        let cnst_index = self.currentChunk().borrow_mut().add_constant(new_val); 
+        let cnst_index = self.currentChunk().add_constant(new_val); 
         // arbitrarily cap number of constants at u8::MAX because you have to draw the line
         // somewhere
         if cnst_index > std::u8::MAX as usize {
@@ -725,30 +725,30 @@ impl Parser{
         self.emitByte(new_val as u8);
         self.emitByte(0xff);
         self.emitByte(0xff);
-        return self.currentChunk().borrow().get_count()-2
+        return self.currentChunk().get_count()-2
     }
 
     fn patchJump(&mut self, offset: usize){
-        let jump = self.currentChunk().borrow().get_count()-offset-2;
+        let jump = self.currentChunk().get_count()-offset-2;
         let high = jump >> 8 & 0xFF;
         let low  = jump & 0xFF;
-        self.currentChunk().borrow_mut().edit_chunk(offset, high as u8);
-        self.currentChunk().borrow_mut().edit_chunk(offset+1, low as u8);
+        self.currentChunk().edit_chunk(offset, high as u8);
+        self.currentChunk().edit_chunk(offset+1, low as u8);
     }
 
     fn emitLoop(&mut self, loopStart: usize){
         self.emitByte(OpCode::OP_LOOP as u8);
-        let offset = self.currentChunk().borrow().get_count()- loopStart+2;
+        let offset = self.currentChunk().get_count()- loopStart+2;
         let high = (offset >> 8) & 0xff;
         let low = offset & 0xff;
         self.emitByte(high as u8);
         self.emitByte(low as u8);
     }
     
-    pub fn currentChunk(&mut self) -> Rc<RefCell<Chunk>>{
-        match &self.compilerStack.peek_mut().unwrap().function{
+    pub fn currentChunk(&mut self) -> & mut Chunk{
+        match &mut self.compilerStack.peek_mut().unwrap().function{
             Some(fnc) => {
-                return fnc.borrow_mut().chunk.clone()
+                return &mut fnc.chunk
             },
             None => panic!("Couldn't load function")
         }

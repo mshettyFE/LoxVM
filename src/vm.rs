@@ -26,7 +26,7 @@ pub struct CallFrame{
 }
 
 pub struct VM{
-    frames: Vec<Rc<RefCell<CallFrame>>>,
+    frames: Vec<CallFrame>,
     frameCount: usize,
     stk: LoxStack, // value stack 
     globals: LoxTable,                                    // global vars
@@ -49,14 +49,14 @@ impl VM {
         // compile() returns false if an error occurred.
         match self.parser.compile(&mut scanner){
             None => return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string()),
-            Some(fnc) => {
-                self.stk.push(Value::VAL_OBJ(fnc.clone()));
+            Some(comp) => {
                 let cf = CallFrame{
-                    func: Some(fnc.clone()),
+                    func: Some(Rc::new(RefCell::new(comp.function.unwrap()))),
                     ip: 0, // we start at the beginning of the function block
                     slot: 0 // The stack only has the top-level function in it, so we set the initial stk pointer to point at the base
                 };
-                self.frames.push(Rc::new(RefCell::new(cf)));
+                self.stk.push(Value::VAL_OBJ(cf.func.clone().unwrap()));
+                self.frames.push(cf);
                 self.frameCount +=1;
                 let res = self.run();
                 return res;
@@ -66,15 +66,15 @@ impl VM {
 
     fn run(&mut self) -> InterpretResult {
         loop {
-            let frame = self.getCurrentFunction();
              match DEBUG_TRACE_EXEC.get() {
                  // assumes that each chunk has starting ip of 0
                  Some(val) => {
                      if *val {
                         self.stk.print();
-                        match &frame.borrow().func {
+                        let frame = self.getCurrentFunction().unwrap();
+                        match &frame.func {
                             Some(fun) => {
-                                let _ = fun.borrow().chunk.borrow().disassemble_instruction(frame.borrow().ip);
+                                let _ = fun.borrow().chunk.disassemble_instruction(frame.ip);
                             }
                             None => {
                                 panic!("AAAAAAAAA");
@@ -107,16 +107,16 @@ impl VM {
                  }
                 OpCode::OP_LOOP => {
                     let offset = self.read_short();
-                    self.getCurrentFunction().borrow_mut().ip -= offset as usize;
+                    self.getCurrentFunction().unwrap().ip -= offset as usize;
                 }
                 OpCode::OP_JUMP =>{
                     let offset = self.read_short();
-                    self.getCurrentFunction().borrow_mut().ip += offset as usize;
+                    self.getCurrentFunction().unwrap().ip += offset as usize;
                 }
                 OpCode::OP_JUMP_IF_FALSE => {
                     let offset = self.read_short();
                     if isFalsey(self.stk.peek(0).unwrap()) {
-                        self.getCurrentFunction().borrow_mut().ip += offset as usize;
+                        self.getCurrentFunction().unwrap().ip += offset as usize;
                     }
                 }
                 OpCode::OP_RETURN => {
@@ -143,7 +143,7 @@ impl VM {
                         Ok(val) => val,
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
                     };
-                    let starting = self.getCurrentFunction().borrow().slot;
+                    let starting = self.getCurrentFunction().unwrap().slot;
                     self.stk.push(self.stk.get(starting+ (slot as usize)).unwrap());
                }
                OpCode::OP_SET_LOCAL => {
@@ -151,7 +151,7 @@ impl VM {
                         Ok(val) => val,
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
                     };
-                    let starting = self.getCurrentFunction().borrow().slot;
+                    let starting = self.getCurrentFunction().unwrap().slot;
                     self.stk.set(starting + (slot as usize), self.stk.peek(0).unwrap());
                }
                OpCode::OP_GET_GLOBAL => {
@@ -366,11 +366,11 @@ impl VM {
 
     fn read_byte(&mut self) -> Result<u8, String> {
         let frame = self.getCurrentFunction();
-        let mut f = frame.borrow_mut();
+        let f = frame.unwrap();
         let output: Result<u8,String>;
         match &f.func {
             Some(fnc) => {
-                match fnc.borrow().chunk.borrow().get_instr(f.ip) {
+                match fnc.borrow().chunk.get_instr(f.ip) {
                     Some(val) => output = Ok(*val),
                     None => {
                     let err_msg = format!("Out of bounds access of code: {}", f.ip);
@@ -401,13 +401,13 @@ impl VM {
 
     fn formatRunTimeError(&mut self, formatted_message: fmt::Arguments) -> String{
         let err_msg = format!("{}",formatted_message);
-        let frame = self.getCurrentFunction();
-        let instruction = frame.borrow().ip - 1;
+        let frame = self.getCurrentFunction().unwrap();
+        let instruction = frame.ip - 1;
         // ip points to the NEXT instruction to be executed, so need to decrement ip by 1
         let line: usize;
-        match &frame.borrow().func{
+        match &frame.func{
             Some(fnc) => {
-               match fnc.borrow().chunk.borrow().get_line(instruction) {
+               match fnc.borrow().chunk.get_line(instruction) {
                     None => {
                         panic!("AAAAA");
                     }
@@ -424,20 +424,19 @@ impl VM {
     }
 
     fn read_short(&mut self) -> u16{
-        let frame = self.getCurrentFunction();
-        frame.borrow_mut().ip += 2;
-        let ip = frame.borrow().ip;
+        self.getCurrentFunction().unwrap().ip += 2;
+        let ip = self.getCurrentFunction().unwrap().ip;
         let higher_byte: u16;
         let lower_byte: u16;
-        match &frame.borrow().func {
+        match &self.getCurrentFunction().unwrap().func {
             Some(fnc) => {
-                match fnc.borrow().chunk.borrow().get_instr(ip-2) {
+                match fnc.borrow().chunk.get_instr(ip-2) {
                     Some(val) => higher_byte = *val as u16,
                     None => {
                         panic!("Out of bounds access of code: {}", ip);
                     }
                 }
-                match fnc.borrow().chunk.borrow().get_instr(ip-1){
+                match fnc.borrow().chunk.get_instr(ip-1){
                     Some(val) => lower_byte = *val as u16,
                     None => {
                         panic!("Out of bounds access of code: {}", ip);
@@ -452,13 +451,13 @@ impl VM {
 
     fn read_constant(&mut self) -> Value {
         let index = self.read_byte().unwrap();
-        let frame = self.getCurrentFunction();
+        let frame = self.getCurrentFunction().unwrap();
         let output: Value;
-        match &frame.borrow_mut().func{
+        match &frame.func{
             Some(fnc) => {
-               match fnc.borrow().chunk.borrow().get_constant(index as usize) {
+               match fnc.borrow().chunk.get_constant(index as usize) {
                     None => {
-                        panic!("Out of bounds access of code: {}", frame.borrow().ip);
+                        panic!("Out of bounds access of code: {}", frame.ip);
                     }
                     Some(val) => {output =  val.clone();} 
                }
@@ -470,7 +469,7 @@ impl VM {
         return output;
     }
 
-    fn getCurrentFunction(&mut self) -> Rc<RefCell<CallFrame>>{
-        self.frames.get(self.frameCount-1).unwrap().clone()
+    fn getCurrentFunction(&mut self) -> Option<&mut CallFrame>{
+        self.frames.get_mut(self.frameCount-1)
     }
 }
