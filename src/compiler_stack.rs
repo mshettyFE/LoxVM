@@ -16,7 +16,7 @@ struct Node{
 impl CompilerStack {
     pub fn new() -> Self{
         let mut a =  CompilerStack{head: None};
-        a.push(Compiler::new(FunctionType::TYPE_SCRIPT));
+        a.push(Compiler::new(FunctionType::TYPE_SCRIPT, None));
         a
     }
     

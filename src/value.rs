@@ -76,6 +76,7 @@ pub fn valuesEqual(a: Value, b: Value) -> bool{
 }
 
 // stores the values in a vector for quick lookup
+#[derive(Clone)]
 pub struct ValueArray{
     values: Vec<Value>,
 }

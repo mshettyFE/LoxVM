@@ -1,8 +1,9 @@
 #![allow(non_camel_case_types)]
+use std::cell::Ref;
 use std::{cell::RefCell};
 use std::rc::Rc;
 
-use crate::object::LoxFunction;
+use crate::object::{LoxFunction, Obj};
 use crate::{chunk::{Chunk, OpCode}, object::LoxString, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use crate:: stack::LoxStack;
 use crate::value::*;
@@ -23,6 +24,12 @@ pub struct CallFrame{
                          // function, which has no relationship to other functions due to how the
                          // call stack is structured)
     pub slot: usize,// starting index w.r.t. the VM.stk array 
+}
+
+impl CallFrame {
+    pub fn new(function: Rc<RefCell<LoxFunction>>, new_slot: usize) -> Self{
+        CallFrame{func: Some(function), ip: 0, slot : new_slot} 
+    }
 }
 
 pub struct VM{
@@ -50,14 +57,8 @@ impl VM {
         match self.parser.compile(&mut scanner){
             None => return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string()),
             Some(comp) => {
-                let cf = CallFrame{
-                    func: Some(Rc::new(RefCell::new(comp.function.unwrap()))),
-                    ip: 0, // we start at the beginning of the function block
-                    slot: 0 // The stack only has the top-level function in it, so we set the initial stk pointer to point at the base
-                };
-                self.stk.push(Value::VAL_OBJ(cf.func.clone().unwrap()));
-                self.frames.push(cf);
-                self.frameCount +=1;
+                self.stk.push(Value::VAL_OBJ(Rc::new(RefCell::new(comp.function.unwrap())).clone()));
+                self.callValue(self.stk.peek(0).unwrap(), 0);
                 let res = self.run();
                 return res;
             }
@@ -118,9 +119,28 @@ impl VM {
                     if isFalsey(self.stk.peek(0).unwrap()) {
                         self.getCurrentFunction().unwrap().ip += offset as usize;
                     }
+                },
+                OpCode::OP_CALL => {
+                    let argCount = self.read_byte().unwrap();
+                    match (self.callValue(self.stk.peek(argCount as usize).unwrap(), argCount)){
+                        Some(str) => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str)))}
+                        None => {()}
+                    }
                 }
                 OpCode::OP_RETURN => {
-                   return InterpretResult::INTERPRET_OK
+                    let result = self.stk.pop();
+                    self.frameCount -= 1;
+                    if (self.frameCount == 0){
+                        self.stk.pop();
+                        return InterpretResult::INTERPRET_OK
+                    }
+                    let current_pointer = self.getCurrentFunction().unwrap().slot; 
+                    let mut  remaining_params = self.stk.size()-current_pointer;
+                    while (remaining_params > 0){
+                        self.stk.pop();
+                       remaining_params -= 1;
+                    }
+                    self.stk.push(result.unwrap());
                 },
                 OpCode::OP_CONSTANT => {
                   let constant: Value = self.read_constant();
@@ -143,16 +163,14 @@ impl VM {
                         Ok(val) => val,
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
                     };
-                    let starting = self.getCurrentFunction().unwrap().slot;
-                    self.stk.push(self.stk.get(starting+ (slot as usize)).unwrap());
+                    self.stk.push(self.stk.get(self.stk.size()-1-slot as usize).unwrap());
                }
                OpCode::OP_SET_LOCAL => {
                     let slot = match self.read_byte() {
                         Ok(val) => val,
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
                     };
-                    let starting = self.getCurrentFunction().unwrap().slot;
-                    self.stk.set(starting + (slot as usize), self.stk.peek(0).unwrap());
+                    self.stk.set(self.stk.size()-1-slot as usize, self.stk.peek(0).unwrap());
                }
                OpCode::OP_GET_GLOBAL => {
                     let name: Value =  self.read_constant();
@@ -364,6 +382,37 @@ impl VM {
         }
     }
 
+    fn callValue(&mut self, callee: Value, argCount: u8)-> Option<String>{
+        match callee {
+            Value::VAL_OBJ(obj_ptr) => {
+                let obj = obj_ptr.borrow();
+                match obj.get_type() {
+                    crate::object::ObjType::OBJ_FUNCTION => {
+                        return self.Call(obj_ptr.clone(), argCount);
+                    }
+                    _ => {()} 
+                }
+            }
+            _ => {()}
+        }
+        return Some("Can only call functions and classes.".to_string());
+    }
+
+    fn Call(&mut self, function_wrapper: Rc<RefCell<dyn Obj>> , argCount: u8) -> Option<String>{
+        self.frameCount += 1;
+        if(self.frameCount == 255){
+            return Some("Stack overflow.".to_string());
+        }
+        let function = function_wrapper.borrow();
+        if argCount as usize != function.any().downcast_ref::<LoxFunction>().unwrap().arity {
+            return Some(format!("Expected {} arguments but got {}.",function.any().downcast_ref::<LoxFunction>().unwrap().arity, argCount));
+        }
+        self.frames.push(
+            CallFrame::new(Rc::new(RefCell::new(function.any().downcast_ref::<LoxFunction>().unwrap().clone())),self.stk.size() -argCount as usize -1)
+        );
+        return None;
+    } 
+
     fn read_byte(&mut self) -> Result<u8, String> {
         let frame = self.getCurrentFunction();
         let f = frame.unwrap();
@@ -374,7 +423,8 @@ impl VM {
                     Some(val) => output = Ok(*val),
                     None => {
                     let err_msg = format!("Out of bounds access of code: {}", f.ip);
-                    output = Err(err_msg)
+//                    panic!("{}", err_msg);
+                    return Err(err_msg);
                     }
                 }
                 f.ip += 1;
@@ -418,9 +468,18 @@ impl VM {
                 panic!("Invalid function");
             }
         }
-        let line_err = format!("[line {}] in script\n", line);
+        let fname =  match &frame.func{
+            Some(function) => {
+                match &function.borrow().name{
+                    Some(name) => name.val.clone(),
+                    None => panic!("AAAAAAAAAAAAAAAAAA")
+                }
+            },
+            None => "script".to_string()
+        };
+        let line_err = format!("[line {}] in {}\n", line, fname);
         self.stk.reset();
-        return format!("{}{}", err_msg,line_err);
+        return format!("{}{}", line_err, err_msg);
     }
 
     fn read_short(&mut self) -> u16{

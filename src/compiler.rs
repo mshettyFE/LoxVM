@@ -12,6 +12,7 @@ use std::mem;
 // size of ParseRules lookup table
 const TOTAL_RULES: usize = 40;
 
+#[derive(PartialEq)]
 pub enum FunctionType {
     TYPE_FUNCTION,
     TYPE_SCRIPT,
@@ -27,14 +28,29 @@ pub struct Compiler {
 }
 
 impl Compiler {
-    pub fn new(new_ftype: FunctionType) -> Self{
-        Compiler{
-            function: Some(LoxFunction::new(0, None)),
-            ftype: new_ftype,
-            locals: Vec::new(),
-            localCount: 0,
-            scopeDepth: 0
+    pub fn new(new_ftype: FunctionType, fname: Option<LoxString>) -> Self{
+        match new_ftype{
+            FunctionType::TYPE_FUNCTION => {
+                Compiler{
+                    function: Some(LoxFunction::new(0, fname)),
+                    ftype: new_ftype,
+                    locals: Vec::new(),
+                    localCount: 0,
+                    scopeDepth: 0
+                }
+            },
+            FunctionType::TYPE_SCRIPT => {
+                let f = LoxFunction::new(0, None);
+                Compiler{
+                    function: Some(f),
+                    ftype: new_ftype,
+                    locals: Vec::new(),
+                    localCount: 0,
+                    scopeDepth: 0
+                }
+            }
         }
+       
     }
 
     pub fn beginScope(&mut self){
@@ -150,7 +166,7 @@ impl Parser{
  //    rules[TokenType:: as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  
  // God this is ugly
- rules[TokenType::TOKEN_LEFT_PAREN as usize] = ParseRule{prefix: Some(Parser::grouping), infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_LEFT_PAREN as usize] = ParseRule{prefix: Some(Parser::grouping), infix: Some(Parser::call), precedence: Precedence::PREC_CALL};
  rules[TokenType::TOKEN_RIGHT_PAREN as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_LEFT_BRACE as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_RIGHT_BRACE as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
@@ -282,8 +298,7 @@ impl Parser{
     fn declaration(&mut self, scanner: &mut Scanner, ){
         if self.Match(scanner, TokenType::TOKEN_FUN){
             self.funDeclaration(scanner);
-        }
-        else if self.Match(scanner, TokenType::TOKEN_VAR){
+        } else if self.Match(scanner, TokenType::TOKEN_VAR){
             self.varDeclaration(scanner);
         } else {
             self.statement(scanner); 
@@ -300,7 +315,7 @@ impl Parser{
         } else {
             self.emitByte(OpCode::OP_NIL as u8);
         }
-        self.consume(TokenType::TOKEN_SEMICOLON, "Expect ';' after variable declaration.".to_string(), scanner);
+        self.consume(TokenType::TOKEN_SEMICOLON, " Expect ';' after variable declaration.".to_string(), scanner);
         self.defineVariable(global);
     }
 
@@ -319,6 +334,9 @@ impl Parser{
         }
         else if self.Match(scanner, TokenType::TOKEN_IF){
             self.ifStatement(scanner );
+        }
+        else if self.Match(scanner, TokenType::TOKEN_RETURN){
+            self.returnStatement(scanner);
         } else if self.Match(scanner, TokenType::TOKEN_WHILE){
             self.whileStatement(scanner);
         } 
@@ -424,12 +442,26 @@ impl Parser{
         self.patchJump(elseJump);
     }
 
+    fn returnStatement(&mut self, scanner: &mut Scanner){
+        if self.compilerStack.peek_mut().unwrap().ftype
+            == FunctionType::TYPE_SCRIPT{
+            self.errorAt("Can't return from top-level code;".to_string(), ErrorTokenLoc::PREVIOUS);
+        }
+        if (self.Match(scanner, TokenType::TOKEN_SEMICOLON)){
+            self.emitReturn();
+        } else {
+            self.expression(scanner);
+            self.consume(TokenType::TOKEN_SEMICOLON, "Expect ';' after return value".to_string(), scanner);
+            self.emitByte(OpCode::OP_RETURN as u8);
+        }
+    }
+
     fn whileStatement(&mut self, scanner: &mut Scanner){
 // Out of bounds problem here        
         let loopStart = self.currentChunk().get_count();
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'while'.".to_string(), scanner);
         self.expression(scanner);
-        self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after 'while'.".to_string(), scanner);
+        self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after 'while' expression.".to_string(), scanner);
         
         let exitJump = self.emitJump(OpCode::OP_JUMP_IF_FALSE);
         self.emitByte(OpCode::OP_POP as u8);
@@ -449,6 +481,11 @@ impl Parser{
         self.expression(scanner);
         self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expected ')' after expression".to_string(), scanner);
     } 
+
+    fn call(&mut self, scanner: &mut Scanner, _canAssign: bool){
+        let argCount = self.argumentList(scanner);
+        self.emitTwoBytes(OpCode::OP_CALL as u8, argCount);
+    }
 
     fn unary(&mut self, scanner: &mut Scanner, _canAssign: bool){
         // once you you hit a unary, you need to process the the following expression while
@@ -584,6 +621,7 @@ impl Parser{
                         prefix_func(self, scanner, canAssign);
                     },
                     None => {
+                        panic!("AAAAAA");
                         self.errorAt("Expect expression".to_string(), ErrorTokenLoc::PREVIOUS);
                         return ;
                     }
@@ -718,6 +756,7 @@ impl Parser{
     }
 
     fn emitReturn(&mut self) {
+        self.emitByte(OpCode::OP_NIL as u8);
         self.emitByte(OpCode::OP_RETURN as u8);
     }
 
@@ -768,7 +807,7 @@ impl Parser{
         eprint!("[line {}] Error: ", token.line);
         match token.ttype {
             TokenType::TOKEN_EOF =>{
-                eprint!(" at end");
+                eprint!(" at end. ");
                 ()
             }
             TokenType::TOKEN_ERROR =>{
@@ -817,15 +856,19 @@ impl Parser{
     }
 
     fn function(&mut self, ftype: FunctionType, scanner: &mut Scanner){
-/*
- * self.compilerStack.push(Compiler::new(ftype));
-        let cur_comp = self.compilerStack.peek_mut().unwrap();
-        cur_comp.beginScope();
+        self.compilerStack.push(Compiler::new(ftype, Some(LoxString::new(self.previous.start.clone()))));
+        self.compilerStack.peek_mut().unwrap().beginScope();
         // declaration
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after function name.".to_string(), scanner);
-        if (! self.check(TokenType::TOKEN_RIGHT_PAREN)){
-            while (self.Match(scanner, TokenType::TOKEN_COMMA)){
-                cur_comp.function.unwrap().borrow_mut().arity += 1; 
+        if ! self.check(TokenType::TOKEN_RIGHT_PAREN) {
+            while self.Match(scanner, TokenType::TOKEN_COMMA){
+                self.compilerStack.peek_mut().unwrap().function.as_mut().unwrap().arity += 1;
+                if self.compilerStack.peek_mut().unwrap().function.as_mut().unwrap().arity > 255 {
+                    self.errorAt("Can't have more than 255 parameters".to_string(), ErrorTokenLoc::CURRENT);
+                }
+
+                let paramConstant = self.parseVariable("Expect parameter name".to_string(), scanner);
+                self.defineVariable(paramConstant);
             }
         }
         self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after function name.".to_string(), scanner);
@@ -833,11 +876,12 @@ impl Parser{
         //body
         self.consume(TokenType::TOKEN_LEFT_BRACE, "Expect '{' before function body.".to_string(), scanner);
 
-        let func = self.endParser();
-        let new_val = Value::VAL_OBJ(func.unwrap());
+        self.block(scanner);
+
+        let comp = self.endParser();
+        let new_val = Value::VAL_OBJ(Rc::new(RefCell::new(comp.unwrap().function.unwrap())));
         let b = self.makeConstant(new_val);
         self.emitTwoBytes(OpCode::OP_CONSTANT as u8, b);
-*/
     }
 
     fn isAtEnd(&mut self) -> bool{
@@ -847,6 +891,21 @@ impl Parser{
     fn check(&mut self, expected: TokenType) -> bool {
         if self.isAtEnd() {return false}
         return self.current.ttype == expected
+    }
+
+    fn argumentList(&mut self, scanner: &mut Scanner) -> u8{
+        let mut argCount = 0;
+        if (!self.check(TokenType::TOKEN_RIGHT_PAREN)){
+            while (self.Match(scanner,TokenType::TOKEN_COMMA)){
+                self.expression(scanner);
+                if argCount == 255 {
+                    self.errorAt("Can't have more than 255 arguments.".to_string(), ErrorTokenLoc::PREVIOUS);
+                }
+                argCount += 1;
+            }
+        }
+        self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after arguments.".to_string(), scanner);
+        return argCount;
     }
 
 }

@@ -15,6 +15,7 @@ pub trait Obj {
     fn print_obj(&self);
 }
 
+#[derive(Clone)]
 pub struct LoxFunction{
     pub arity: usize,
     pub chunk: Chunk,
