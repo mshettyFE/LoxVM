@@ -3,7 +3,7 @@ use std::cell::Ref;
 use std::{cell::RefCell};
 use std::rc::Rc;
 
-use crate::object::{LoxFunction, Obj};
+use crate::object::{LoxFunction, NativeFn, Obj, ObjNative};
 use crate::{chunk::{Chunk, OpCode}, object::LoxString, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use crate:: stack::LoxStack;
 use crate::value::*;
@@ -11,7 +11,7 @@ use crate::compiler::*;
 use crate::table::LoxTable;
 
 use core::{fmt, panic};
-
+use std::time::{SystemTime, UNIX_EPOCH};
 pub enum InterpretResult {
     INTERPRET_OK,
     INTERPRET_COMPILE_ERROR(String),
@@ -40,14 +40,24 @@ pub struct VM{
     parser: Parser
 }
 
+pub fn clockNative(argC: usize, value_index: usize) -> Value{
+    let time =     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros();
+    Value::VAL_NUMBER(time as f64)
+}
+
 impl VM {
     pub fn new() -> Self{
-        return VM{
+    let mut x = VM{
         frames: Vec::new(),
         frameCount: 0,
         globals: LoxTable::new(),
         stk: LoxStack::new(),
-        parser: Parser::new()};
+        parser: Parser::new()
+    };
+    
+    x.defineNative(LoxString::new("clock".to_string()), clockNative);
+    x
+
     }
     
     pub fn interpret(&mut self, source: &String) -> InterpretResult { 
@@ -389,6 +399,14 @@ impl VM {
                 match obj.get_type() {
                     crate::object::ObjType::OBJ_FUNCTION => {
                         return self.Call(obj_ptr.clone(), argCount);
+                    },
+                    crate::object::ObjType::OBJ_NATIVE => {
+                        // the value argument is wrong, but IDK
+                        let result = (obj.any().downcast_ref::<ObjNative>().unwrap().function)(argCount as usize, 0);
+                        for i in 0..argCount+1{
+                            self.stk.pop();
+                        }
+                        self.stk.push(result);
                     }
                     _ => {()} 
                 }
@@ -480,6 +498,14 @@ impl VM {
         let line_err = format!("[line {}] in {}\n", line, fname);
         self.stk.reset();
         return format!("{}{}", line_err, err_msg);
+    }
+
+    fn defineNative(&mut self, name: LoxString, function: NativeFn){
+        self.stk.push(Value::VAL_OBJ(Rc::new( RefCell::new(name.clone()))));
+        self.stk.push(Value::VAL_OBJ(Rc::new( RefCell::new(ObjNative::new(function)))));
+        self.globals.insert( name, self.stk.get(1).unwrap());
+        self.stk.pop();
+        self.stk.pop();
     }
 
     fn read_short(&mut self) -> u16{

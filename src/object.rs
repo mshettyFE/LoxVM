@@ -2,11 +2,15 @@
 use std::any::Any;
 
 use crate::chunk::Chunk;
+use crate::value::Value;
+
+
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum ObjType{
     OBJ_STRING,
     OBJ_FUNCTION,
+    OBJ_NATIVE
 }
 
 pub trait Obj {
@@ -15,11 +19,37 @@ pub trait Obj {
     fn print_obj(&self);
 }
 
+pub type NativeFn = fn(usize, usize) -> Value;
+
 #[derive(Clone)]
 pub struct LoxFunction{
     pub arity: usize,
     pub chunk: Chunk,
     pub name: Option<LoxString>,
+}
+
+pub struct ObjNative{
+    pub function: NativeFn
+}
+
+impl ObjNative {
+    pub fn new(func: NativeFn) -> Self{
+        ObjNative{function: func}
+    }
+}
+
+impl Obj for ObjNative{
+    fn any(&self) -> &dyn Any{
+        self
+    }
+    fn get_type(&self) -> ObjType{
+       return ObjType::OBJ_NATIVE 
+    }
+    
+    fn print_obj(&self){
+        print!("<native fn>"); 
+    }
+
 }
 
 impl Obj for LoxFunction {

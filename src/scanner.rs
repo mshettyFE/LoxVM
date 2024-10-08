@@ -87,7 +87,7 @@ impl Scanner{
             '<' => {let final_token = match self.Match('='){true => TokenType::TOKEN_LESS_EQUAL, false => TokenType::TOKEN_LESS}; return self.make_token(final_token);},
             '>' => {let final_token = match self.Match('='){true => TokenType::TOKEN_GREATER_EQUAL, false => TokenType::TOKEN_GREATER}; return self.make_token(final_token);},
             '"' => {return self.string();}
-            _ => return self.error_token("Unexpected character.".to_string()),
+            other => return self.error_token(format!("Unexpected character {}.", other)),
         }
     }
 
@@ -178,10 +178,10 @@ impl Scanner{
                         Some(val) => {
                             match *val as char{
                                 '/' => true,
-                                _ => false,
+                                _ =>  return (),
                             }
                         },
-                        None => false
+                        None => return ()
                     };
 
                     if !comment_start{return ();}
@@ -195,7 +195,7 @@ impl Scanner{
                             },
                             None => false,
                         };
-                        if is_newline || self.isAtEnd() {return ();}
+                        if is_newline || self.isAtEnd() {break;}
                         self.advance();
                     }
                 }
