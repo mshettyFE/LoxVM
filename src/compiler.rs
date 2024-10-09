@@ -861,17 +861,19 @@ impl Parser{
         // declaration
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after function name.".to_string(), scanner);
         if ! self.check(TokenType::TOKEN_RIGHT_PAREN) {
-            while self.Match(scanner, TokenType::TOKEN_COMMA){
+            loop {
                 self.compilerStack.peek_mut().unwrap().function.as_mut().unwrap().arity += 1;
-                if self.compilerStack.peek_mut().unwrap().function.as_mut().unwrap().arity > 255 {
+                if self.compilerStack.peek_mut().unwrap().function.as_mut().unwrap().arity >= 255 {
                     self.errorAt("Can't have more than 255 parameters".to_string(), ErrorTokenLoc::CURRENT);
                 }
-
                 let paramConstant = self.parseVariable("Expect parameter name".to_string(), scanner);
                 self.defineVariable(paramConstant);
+                if !self.Match(scanner, TokenType::TOKEN_COMMA){
+                    break;
+                }
             }
         }
-        self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after function name.".to_string(), scanner);
+        self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after arguments.".to_string(), scanner);
 
         //body
         self.consume(TokenType::TOKEN_LEFT_BRACE, "Expect '{' before function body.".to_string(), scanner);
@@ -896,15 +898,16 @@ impl Parser{
     fn argumentList(&mut self, scanner: &mut Scanner) -> u8{
         let mut argCount = 0;
         if (!self.check(TokenType::TOKEN_RIGHT_PAREN)){
-            while (self.Match(scanner,TokenType::TOKEN_COMMA)){
+            loop{
                 self.expression(scanner);
                 if argCount == 255 {
                     self.errorAt("Can't have more than 255 arguments.".to_string(), ErrorTokenLoc::PREVIOUS);
                 }
                 argCount += 1;
+                if !self.Match(scanner,TokenType::TOKEN_COMMA){break;}
             }
         }
-        self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after arguments.".to_string(), scanner);
+        self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after arguments when calling function.".to_string(), scanner);
         return argCount;
     }
 

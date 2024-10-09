@@ -23,12 +23,12 @@ pub struct CallFrame{
     pub ip: usize, // ip relative to the current function (so 0 is the start of the current
                          // function, which has no relationship to other functions due to how the
                          // call stack is structured)
-    pub slot: usize,// starting index w.r.t. the VM.stk array 
+    pub starting_index: usize, // initial index into vm stack for this function
 }
 
 impl CallFrame {
-    pub fn new(function: Rc<RefCell<LoxFunction>>, new_slot: usize) -> Self{
-        CallFrame{func: Some(function), ip: 0, slot : new_slot} 
+    pub fn new(function: Rc<RefCell<LoxFunction>>, new_starting_index: usize) -> Self{
+        CallFrame{func: Some(function), ip: 0, starting_index: new_starting_index} 
     }
 }
 
@@ -133,8 +133,8 @@ impl VM {
                 OpCode::OP_CALL => {
                     let argCount = self.read_byte().unwrap();
                     match (self.callValue(self.stk.peek(argCount as usize).unwrap(), argCount)){
-                        Some(str) => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str)))}
-                        None => {()}
+                        Err(str) => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str)))}
+                        Ok(()) => {()}
                     }
                 }
                 OpCode::OP_RETURN => {
@@ -144,7 +144,7 @@ impl VM {
                         self.stk.pop();
                         return InterpretResult::INTERPRET_OK
                     }
-                    let current_pointer = self.getCurrentFunction().unwrap().slot; 
+                    let current_pointer = self.getCurrentFunction().unwrap().starting_index; 
                     let mut  remaining_params = self.stk.size()-current_pointer;
                     while (remaining_params > 0){
                         self.stk.pop();
@@ -173,14 +173,20 @@ impl VM {
                         Ok(val) => val,
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
                     };
-                    self.stk.push(self.stk.get(self.stk.size()-1-slot as usize).unwrap());
+                    let cur_frame = self.frames.get(self.frameCount-1).unwrap();
+                    let index = cur_frame.starting_index + slot as usize;
+                    println!("ABS Index {}, starting {}, slot {}", index, cur_frame.starting_index, slot);
+                    self.stk.push(self.stk.get(index).unwrap());
                }
                OpCode::OP_SET_LOCAL => {
                     let slot = match self.read_byte() {
                         Ok(val) => val,
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
                     };
-                    self.stk.set(self.stk.size()-1-slot as usize, self.stk.peek(0).unwrap());
+                    let cur_frame = self.frames.get(self.frameCount-1).unwrap();
+                    let index = cur_frame.starting_index + slot as usize;
+                    println!("ABS Index {}, starting {}, slot {}", index, cur_frame.starting_index, slot);
+                    self.stk.set(index, self.stk.peek(0).unwrap());
                }
                OpCode::OP_GET_GLOBAL => {
                     let name: Value =  self.read_constant();
@@ -373,9 +379,9 @@ impl VM {
                             self.stk.pop();
     
                             let output = match opcode {
-                                OpCode::OP_SUBTRACT => a_float.unwrap()-b_float.unwrap(),
-                                OpCode::OP_MULTIPLY => a_float.unwrap()*b_float.unwrap(),
-                                OpCode::OP_DIVIDE => a_float.unwrap()/b_float.unwrap(),
+                                OpCode::OP_SUBTRACT => b_float.unwrap()-a_float.unwrap(),
+                                OpCode::OP_MULTIPLY => b_float.unwrap()*a_float.unwrap(),
+                                OpCode::OP_DIVIDE => b_float.unwrap()/a_float.unwrap(),
                                 _ => return InterpretResult::INTERPRET_RUNTIME_ERROR("Something went horrible wrong when trying to do a binary operation".to_string())
                             };
                             self.stk.push(Value::VAL_NUMBER(output));     
@@ -392,7 +398,7 @@ impl VM {
         }
     }
 
-    fn callValue(&mut self, callee: Value, argCount: u8)-> Option<String>{
+    fn callValue(&mut self, callee: Value, argCount: u8)-> Result<(),String>{
         match callee {
             Value::VAL_OBJ(obj_ptr) => {
                 let obj = obj_ptr.borrow();
@@ -413,22 +419,23 @@ impl VM {
             }
             _ => {()}
         }
-        return Some("Can only call functions and classes.".to_string());
+        return Err("Can only call functions and classes.".to_string());
     }
 
-    fn Call(&mut self, function_wrapper: Rc<RefCell<dyn Obj>> , argCount: u8) -> Option<String>{
+    fn Call(&mut self, function_wrapper: Rc<RefCell<dyn Obj>> , argCount: u8) -> Result<(),String>{
         self.frameCount += 1;
         if(self.frameCount == 255){
-            return Some("Stack overflow.".to_string());
+            return Err("Stack overflow.".to_string());
         }
         let function = function_wrapper.borrow();
         if argCount as usize != function.any().downcast_ref::<LoxFunction>().unwrap().arity {
-            return Some(format!("Expected {} arguments but got {}.",function.any().downcast_ref::<LoxFunction>().unwrap().arity, argCount));
+            return Err(format!("Expected {} arguments but got {}.",function.any().downcast_ref::<LoxFunction>().unwrap().arity, argCount));
         }
         self.frames.push(
-            CallFrame::new(Rc::new(RefCell::new(function.any().downcast_ref::<LoxFunction>().unwrap().clone())),self.stk.size() -argCount as usize -1)
+            CallFrame::new(Rc::new(RefCell::new(function.any().downcast_ref::<LoxFunction>().unwrap().clone())),
+            self.stk.size() - argCount as usize )
         );
-        return None;
+        return Ok(());
     } 
 
     fn read_byte(&mut self) -> Result<u8, String> {
