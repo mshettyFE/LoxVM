@@ -49,7 +49,6 @@ impl Obj for ObjNative{
     fn print_obj(&self){
         print!("<native fn>"); 
     }
-
 }
 
 impl Obj for LoxFunction {

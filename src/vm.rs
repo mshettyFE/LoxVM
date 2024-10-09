@@ -1,5 +1,4 @@
 #![allow(non_camel_case_types)]
-use std::cell::Ref;
 use std::{cell::RefCell};
 use std::rc::Rc;
 
@@ -41,8 +40,8 @@ pub struct VM{
 }
 
 pub fn clockNative(argC: usize, value_index: usize) -> Value{
-    let time =     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros();
-    Value::VAL_NUMBER(time as f64)
+    let time =     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
+    Value::VAL_NUMBER(time)
 }
 
 impl VM {
@@ -53,11 +52,10 @@ impl VM {
         globals: LoxTable::new(),
         stk: LoxStack::new(),
         parser: Parser::new()
-    };
+        };
     
-    x.defineNative(LoxString::new("clock".to_string()), clockNative);
-    x
-
+        x.defineNative(LoxString::new("clock".to_string()), clockNative);
+        x
     }
     
     pub fn interpret(&mut self, source: &String) -> InterpretResult { 
@@ -68,7 +66,10 @@ impl VM {
             None => return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string()),
             Some(comp) => {
                 self.stk.push(Value::VAL_OBJ(Rc::new(RefCell::new(comp.function.unwrap())).clone()));
-                self.callValue(self.stk.peek(0).unwrap(), 0);
+                match self.callValue(self.stk.peek(0).unwrap(), 0){
+                        Err(str) => { return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str)))}
+                        Ok(()) => {()}
+                }
                 let res = self.run();
                 return res;
             }
@@ -98,14 +99,15 @@ impl VM {
              }
              let instruction_number  = match self.read_byte(){
                 Ok(val) => val,
-                Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
+                Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",err_msg))),
              };
            // try and convert current byte to an opcode
              let cand_opcode: Option<OpCode> = num::FromPrimitive::from_u8(instruction_number);
              let opcode = match cand_opcode {
                  Some(val) => val,
-                None => return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Invalid conversion  to OpCode attempted: {}", instruction_number)),       
+                None => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Invalid conversion  to OpCode attempted: {}", instruction_number))),       
             };
+//            println!("Cur Frame {}, MaxFrames {}", self.frameCount, self.frames.len());
             match opcode { //finally, dispatch to the correct opcode
                 OpCode::OP_PRINT => {
                     match self.stk.pop(){
@@ -113,7 +115,7 @@ impl VM {
                             v.print_value();
                             println!();
                         }
-                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR("Stack is empty".to_string())}
+                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Stack is empty")))}
                      }
                  }
                 OpCode::OP_LOOP => {
@@ -131,6 +133,7 @@ impl VM {
                     }
                 },
                 OpCode::OP_CALL => {
+                    //println!("Function  Depth {}", self.frameCount);
                     let argCount = self.read_byte().unwrap();
                     match (self.callValue(self.stk.peek(argCount as usize).unwrap(), argCount)){
                         Err(str) => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str)))}
@@ -139,16 +142,21 @@ impl VM {
                 }
                 OpCode::OP_RETURN => {
                     let result = self.stk.pop();
+                    let current_pointer = self.getCurrentFunction().unwrap().starting_index;
+/*
+                    for frame in self.frames.iter(){
+                        println!("FuncStart {}", frame.starting_index);
+                    }
+                    println!("Returning from. FrameCount {}, TotalFrames {}, Stack Size {}, cur_ptr {}", self.frameCount , self.frames.len(),  self.stk.size(), current_pointer);
+*/
+                    while self.stk.size() > current_pointer{
+                        self.stk.pop();
+                    }
                     self.frameCount -= 1;
+                    self.frames.pop();
                     if (self.frameCount == 0){
                         self.stk.pop();
                         return InterpretResult::INTERPRET_OK
-                    }
-                    let current_pointer = self.getCurrentFunction().unwrap().starting_index; 
-                    let mut  remaining_params = self.stk.size()-current_pointer;
-                    while (remaining_params > 0){
-                        self.stk.pop();
-                       remaining_params -= 1;
                     }
                     self.stk.push(result.unwrap());
                 },
@@ -171,21 +179,21 @@ impl VM {
                OpCode::OP_GET_LOCAL => {
                     let slot = match self.read_byte() {
                         Ok(val) => val,
-                        Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
+                        Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",err_msg))),
                     };
-                    let cur_frame = self.frames.get(self.frameCount-1).unwrap();
-                    let index = cur_frame.starting_index + slot as usize;
-                    println!("ABS Index {}, starting {}, slot {}", index, cur_frame.starting_index, slot);
+                    let cur_frame = self.getCurrentFunction().unwrap();
+                    let index = cur_frame.starting_index + slot as usize +1;
+//                    println!("ABS Index {}, starting {}, slot {}", index, cur_frame.starting_index, slot);
                     self.stk.push(self.stk.get(index).unwrap());
                }
                OpCode::OP_SET_LOCAL => {
                     let slot = match self.read_byte() {
                         Ok(val) => val,
-                        Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(err_msg),
+                        Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",err_msg))),
                     };
-                    let cur_frame = self.frames.get(self.frameCount-1).unwrap();
-                    let index = cur_frame.starting_index + slot as usize;
-                    println!("ABS Index {}, starting {}, slot {}", index, cur_frame.starting_index, slot);
+                    let cur_frame = self.getCurrentFunction().unwrap();
+                    let index = cur_frame.starting_index + slot as usize+1;
+//                    println!("ABS Index {}, starting {}, slot {}", index, cur_frame.starting_index, slot);
                     self.stk.set(index, self.stk.peek(0).unwrap());
                }
                OpCode::OP_GET_GLOBAL => {
@@ -197,7 +205,7 @@ impl VM {
                             key = ptr.any().downcast_ref::<LoxString>().unwrap().clone();
                         }
                         _ => {
-                            return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Should have gotten a LoxString..."));
+                            return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Should have gotten a LoxString...")));
                         }
                     }
                     let wrapped_val = self.globals.find(key.clone());
@@ -206,7 +214,7 @@ impl VM {
                             self.stk.push(value);
                         }
                         None => {
-                            return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Undefined variable {}.",key.val.clone()));
+                            return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Undefined variable {}.",key.val.clone())));
                         }
                      }
                }
@@ -219,7 +227,7 @@ impl VM {
                                let value = self.stk.peek(0).unwrap();
                                self.globals.insert(key.clone(), value);
                         },
-                        _ => { return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Tried accessing a global"))}
+                        _ => { return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Tried accessing a global")))}
 
                     } 
                     self.stk.pop();
@@ -232,20 +240,20 @@ impl VM {
                                let key = ptr.any().downcast_ref::<LoxString>().unwrap();
                                let value = self.stk.peek(0).unwrap();
                                if self.globals.insert(key.clone(), value).is_none(){
-                                    return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Undefined variable {}.", key.val))
+                                    return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Undefined variable {}.", key.val)))
                                }
                         },
-                        _ => { return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Tried accessing a global"))}
+                        _ => { return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}","Tried accessing a global")));}
                     } 
                }
                OpCode::OP_EQUAL => {
                    let a = match self.stk.peek(0){
                         Some(val) => {val},
-                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 0));},
+                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{} {}","Stack can't be accessed at", 0)));},
                     };
                    let b = match self.stk.peek(1){
                         Some(val) => {val},
-                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 1));},
+                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{} {}","Stack can't be accessed at", 1)));},
                     };
                    self.stk.push(Value::VAL_BOOL(valuesEqual(a, b)));
                },
@@ -254,19 +262,19 @@ impl VM {
                         Some(val) => {
                             match val {
                                 Value::VAL_NUMBER(num) => {num},
-                                _ => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Cant compare something greater than if it ain't a number"));}
+                                _ => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}","Cant compare something greater than if it ain't a number")));}
                             }
                         },
-                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 0));},
+                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}{}","Stack can't be accessed at ",0)));},
                     };
                    let b = match self.stk.peek(1){
                         Some(val) => {
                             match val {
                                 Value::VAL_NUMBER(num) => {num},
-                                _ => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Cant compare something greater than if it ain't a number"));}
+                                _ => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}","Cant compare something greater than if it ain't a number")));}
                             }
                         },
-                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 1));},
+                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}{}","Stack can't be accessed at ", 1)));},
                     };
                    self.stk.push(Value::VAL_BOOL(b> a));
                },
@@ -275,26 +283,26 @@ impl VM {
                         Some(val) => {
                             match val {
                                 Value::VAL_NUMBER(num) => {num},
-                                _ => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Cant compare something less than if it ain't a number"));}
+                                _ => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}","Cant compare something less than if it ain't a number")));}
                             }
                         },
-                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 0));},
+                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{} {}","Stack can't be accessed at ",0)));},
                     };
                    let b = match self.stk.peek(1){
                         Some(val) => {
                             match val {
                                 Value::VAL_NUMBER(num) => {num},
-                                _ => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Cant compare something less than if it ain't a number"));}
+                                _ => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}","Cant compare something less than if it ain't a number")));}
                             }
                         },
-                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(format!("Stack can't be accessed at {}", 1));},
+                        None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}{}","Stack can't be accessed at {}", 1)));},
                     };
                    self.stk.push(Value::VAL_BOOL(b< a));
                },
                OpCode::OP_NEGATE => {
                     let peek_val = match self.stk.peek(0) {
                         Some(v) => v,
-                        None => return InterpretResult::INTERPRET_RUNTIME_ERROR("Stack is empty".to_string()),
+                        None => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Stack is empty"))),
                     };
 
                     match peek_val {
@@ -356,7 +364,7 @@ impl VM {
                             self.stk.push(Value::VAL_NUMBER(a_float.unwrap()+b_float.unwrap()));
                              
                         } else {
-                            return InterpretResult::INTERPRET_RUNTIME_ERROR("Operands must be two numbers or two strings.".to_string());
+                            return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Operands must be two numbers or two strings.")));
                         } 
                     }                     
                },
@@ -382,12 +390,12 @@ impl VM {
                                 OpCode::OP_SUBTRACT => b_float.unwrap()-a_float.unwrap(),
                                 OpCode::OP_MULTIPLY => b_float.unwrap()*a_float.unwrap(),
                                 OpCode::OP_DIVIDE => b_float.unwrap()/a_float.unwrap(),
-                                _ => return InterpretResult::INTERPRET_RUNTIME_ERROR("Something went horrible wrong when trying to do a binary operation".to_string())
+                                _ => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Something went horrible wrong when trying to do a binary operation")))
                             };
                             self.stk.push(Value::VAL_NUMBER(output));     
                         }
                         else{ 
-                            return InterpretResult::INTERPRET_RUNTIME_ERROR("Operands must be two numbers or two strings.".to_string()); 
+                            return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Operands must be two numbers or two strings."))); 
                         }
                },
                OpCode::OP_NOT => {
@@ -408,11 +416,13 @@ impl VM {
                     },
                     crate::object::ObjType::OBJ_NATIVE => {
                         // the value argument is wrong, but IDK
-                        let result = (obj.any().downcast_ref::<ObjNative>().unwrap().function)(argCount as usize, 0);
-                        for i in 0..argCount+1{
+                        let fn_start = self.stk.size()- argCount as usize;
+                        let result = (obj.any().downcast_ref::<ObjNative>().unwrap().function)(argCount as usize, fn_start);
+                        while (self.stk.size() > fn_start){
                             self.stk.pop();
                         }
                         self.stk.push(result);
+                        return Ok(());
                     }
                     _ => {()} 
                 }
@@ -433,7 +443,7 @@ impl VM {
         }
         self.frames.push(
             CallFrame::new(Rc::new(RefCell::new(function.any().downcast_ref::<LoxFunction>().unwrap().clone())),
-            self.stk.size() - argCount as usize )
+            self.stk.size() - argCount as usize -1 )
         );
         return Ok(());
     } 
@@ -475,7 +485,7 @@ impl VM {
     }
 
     fn formatRunTimeError(&mut self, formatted_message: fmt::Arguments) -> String{
-        let err_msg = format!("{}",formatted_message);
+        let err_msg = format!("{}\n",formatted_message);
         let frame = self.getCurrentFunction().unwrap();
         let instruction = frame.ip - 1;
         // ip points to the NEXT instruction to be executed, so need to decrement ip by 1
@@ -497,14 +507,47 @@ impl VM {
             Some(function) => {
                 match &function.borrow().name{
                     Some(name) => name.val.clone(),
-                    None => panic!("AAAAAAAAAAAAAAAAAA")
+                    None => "script".to_string(),
                 }
             },
             None => "script".to_string()
         };
         let line_err = format!("[line {}] in {}\n", line, fname);
+
+        // stack trace
+        let mut cur_frame = self.frameCount-1;
+        let mut stack_trace = "".to_string();
+        while cur_frame >= 0 {
+            match &self.frames.get_mut(cur_frame){
+                None => {
+                    panic!("AAAAAAAAAAAAAAA");
+                }
+                Some(frame) =>{
+                    match &frame.func{
+                        None => panic!("AAAAAAAAAA"),
+                        Some(function) => {
+                            let f = function.borrow();                    
+                            let instr = frame.ip;
+                            let line_num = f.chunk.get_line(instr);
+                            stack_trace = format!("{}[line {}] in", stack_trace, line_num.unwrap());
+                            match &f.name{
+                                None => {
+                                    stack_trace = format!("{} script\n",stack_trace );
+                                }
+                                Some(string) => {
+                                    stack_trace = format!("{} {}()\n",stack_trace, string.val.clone() );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (cur_frame == 0) {break;}
+            cur_frame -= 1;
+        }
+
         self.stk.reset();
-        return format!("{}{}", line_err, err_msg);
+        return format!("{}{}{}", line_err, err_msg, stack_trace);
     }
 
     fn defineNative(&mut self, name: LoxString, function: NativeFn){
