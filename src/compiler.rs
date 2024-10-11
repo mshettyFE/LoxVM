@@ -12,6 +12,7 @@ use std::mem;
 // size of ParseRules lookup table
 const TOTAL_RULES: usize = 40;
 
+// This only exists so that you can tell when you are at the top of the call stack
 #[derive(PartialEq)]
 pub enum FunctionType {
     TYPE_FUNCTION,
@@ -20,8 +21,8 @@ pub enum FunctionType {
 
 
 pub struct Compiler {
-    pub function: Option<LoxFunction>,
-    ftype: FunctionType,
+    pub function: Option<LoxFunction>, // what function the compiler is currently trying to check
+    ftype: FunctionType, // tells you if the current function is main
     locals: Vec<Locals>, // a stack of local variables that are accessible in the current scope
     localCount: u64, // a count of the number of variables accessible in the current scope
     scopeDepth: u64 // the current scope
@@ -30,6 +31,7 @@ pub struct Compiler {
 impl Compiler {
     pub fn new(new_ftype: FunctionType, fname: Option<LoxString>) -> Self{
         match new_ftype{
+            // Most functions calls go here. You give Names to your functions
             FunctionType::TYPE_FUNCTION => {
                 Compiler{
                     function: Some(LoxFunction::new(0, fname)),
@@ -39,10 +41,10 @@ impl Compiler {
                     scopeDepth: 0
                 }
             },
+            // the "main" function goes here. It has no name
             FunctionType::TYPE_SCRIPT => {
-                let f = LoxFunction::new(0, None);
                 Compiler{
-                    function: Some(f),
+                    function: Some(LoxFunction::new(0, None)),
                     ftype: new_ftype,
                     locals: Vec::new(),
                     localCount: 0,
@@ -62,7 +64,7 @@ impl Compiler {
     }
    
     fn markInitialized(& mut self) {
-        if (self.scopeDepth == 0 ) {return}
+        if self.scopeDepth == 0 {return}
         // utilized to prevent self-initialization (ie. var a = a; type of thing).
         // Use option as a sentinel value
         self.locals.get_mut((self.localCount) as usize -1).unwrap().depth = 
@@ -70,6 +72,7 @@ impl Compiler {
     }
 }
 
+// defines a local variable
 pub struct Locals {
     pub name: Token, // name of variable
     pub depth: Option<u64>, // scope of local
@@ -105,6 +108,8 @@ pub enum ErrorTokenLoc{
     CURRENT
 }
 
+// Precedence of operations. Goes from high precedence to low precedence
+// Bigger number is lower precedence
 #[derive(Copy, Clone,PartialEq, PartialOrd, FromPrimitive, Debug)]
 pub enum Precedence {
  PREC_NONE,
@@ -219,6 +224,8 @@ impl Parser{
         // interface of parser. Give it a scanner, and it will chew through the tokens, spitting
         // out byte code
         // returns false if an error has occurred
+
+        // A program is just a series of declarations that ends in a TOKEN_EOF
         self.advance(scanner);
         loop {
            if self.Match(scanner, TokenType::TOKEN_EOF){
@@ -235,6 +242,7 @@ impl Parser{
         }
     }
 
+// Stream manipulation functions
     fn advance(&mut self, scanner: &mut Scanner){
         // save current token (to be able to later access the lexeme), and then ask the scanner for
         // a new token
@@ -269,33 +277,24 @@ impl Parser{
         self.errorAt(err_msg, ErrorTokenLoc::CURRENT);
     }
  
-    fn endParser(&mut self) -> Option<Compiler>{
-        // tops off chunk with return, and then disassembles if prompted
-        self.emitReturn();
-        let function = &self.compilerStack.peek_mut().unwrap().function;
-        if *DEBUG_PRINT_CODE.get().unwrap(){
-            if !self.hadError{
-                let msg = match &function {
-                    Some(fnc) => match &fnc.name {
-                        Some(v) => v.val.clone(),
-                        None => "<script>".to_string(),
-                    }
-                    None => panic!("Couldn't load function")
-                };
-                let _ = self.currentChunk().disassemble(msg);
-            }
-        }
-        // move up to new compiler
-        let out = self.compilerStack.pop();
-       return out;
+    fn isAtEnd(&mut self) -> bool{
+        return self.current.ttype == TokenType::TOKEN_EOF
     }
 
+    fn check(&mut self, expected: TokenType) -> bool {
+        // Check if you have the specified token without consuming it
+        if self.isAtEnd() {return false}
+        return self.current.ttype == expected
+    }
 
 // grammar production functions
 // see https://craftinginterpreters.com/image/compiling-expressions/connections.png
 // These are effectively translating the BNF notation of Lox into code
 
     fn declaration(&mut self, scanner: &mut Scanner, ){
+        // a statement which binds other statements
+        // You can think of bindings as associating a variable with a specific scope
+        // The top level entry point.
         if self.Match(scanner, TokenType::TOKEN_FUN){
             self.funDeclaration(scanner);
         } else if self.Match(scanner, TokenType::TOKEN_VAR){
@@ -307,26 +306,10 @@ impl Parser{
             self.synchronize(scanner);
         }
     }
-
-    fn varDeclaration(&mut self, scanner: &mut Scanner,  ){
-        let global = self.parseVariable("Expect variable name".to_string(), scanner);
-        if self.Match(scanner, TokenType::TOKEN_EQUAL) {
-            self.expression(scanner);
-        } else {
-            self.emitByte(OpCode::OP_NIL as u8);
-        }
-        self.consume(TokenType::TOKEN_SEMICOLON, " Expect ';' after variable declaration.".to_string(), scanner);
-        self.defineVariable(global);
-    }
-
-    fn funDeclaration(&mut self, scanner: &mut Scanner){
-        let global = self.parseVariable("Expect function name.".to_string(), scanner);
-        self.compilerStack.peek_mut().unwrap().markInitialized();
-        self.function(FunctionType::TYPE_FUNCTION, scanner);
-        self.defineVariable(global);
-    }
     
     fn statement(&mut self, scanner: &mut Scanner ){
+        // Rules which produce side effects, but don't introduce bindings
+        // Most of these just point to a specific function to handling parsing
         if self.Match(scanner, TokenType::TOKEN_PRINT){
             self.printStatement(scanner); 
         } else if self.Match(scanner, TokenType::TOKEN_FOR){
@@ -341,14 +324,20 @@ impl Parser{
             self.whileStatement(scanner);
         } 
         else if self.Match(scanner, TokenType::TOKEN_LEFT_BRACE){
+            // Blocks are slightly more involved
+            // You need to wrap the block in it's own scope
             self.compilerStack.peek_mut().unwrap().beginScope();
             self.block(scanner);
             self.compilerStack.peek_mut().unwrap().endScope();
             loop {
+                // Once the block is done, you need to pop off all of the local variables which
+                // where generated in the block
                 if self.compilerStack.peek_mut().unwrap().localCount == 0 {
                     break;
                 }
                 let cur_comp = self.compilerStack.peek_mut().unwrap();
+                // you get rid of all variables whose depth is greater than that of the current
+                // scope depth
                 let var_depth = cur_comp.locals.get( (cur_comp.localCount-1) as usize ).unwrap().depth;
                 if var_depth.unwrap() > self.compilerStack.peek_mut().unwrap().scopeDepth {
                     self.emitByte(OpCode::OP_POP as u8);
@@ -362,23 +351,63 @@ impl Parser{
             self.expressionStatement(scanner);
         }
     }
-
-    fn printStatement(&mut self, scanner: &mut Scanner){
-        self.expression(scanner);
-        self.consume(TokenType::TOKEN_SEMICOLON, "Expect ; after value.".to_string(), scanner);
-        self.emitByte(OpCode::OP_PRINT as u8);
+    
+    fn expression(&mut self, scanner: &mut Scanner,  ) {
+        // interpret an expression
+        self.parsePrecedence(Precedence::PREC_ASSIGNMENT, scanner);
     }
 
     fn expressionStatement(&mut self, scanner: &mut Scanner ){
+        // This just parses an expression, but demands that there's a ; afterwards
         self.expression(scanner);
         self.consume(TokenType::TOKEN_SEMICOLON, "Expect ; after value.".to_string(), scanner);
         self.emitByte(OpCode::OP_POP as u8);
     }
 
+    fn varDeclaration(&mut self, scanner: &mut Scanner,  ){
+        // Declares a variable
+        // BNF notation: "var" IDENTIFIER ( "=" expression )? ";"
+        // This allows you to declare an uninitialized and initialized variable;
+        
+        // Parse the variable declaration part 
+        let global = self.parseVariable("Expect variable name".to_string(), scanner);
+        // see if you need to assign a value to the variable right now
+        if self.Match(scanner, TokenType::TOKEN_EQUAL) {
+            self.expression(scanner);
+        } else {
+            self.emitByte(OpCode::OP_NIL as u8);
+        }
+        self.consume(TokenType::TOKEN_SEMICOLON, " Expect ';' after variable declaration.".to_string(), scanner);
+        // Add the variable to the VM hashmap
+        self.defineVariable(global);
+    }
+
+    fn funDeclaration(&mut self, scanner: &mut Scanner){
+        // Declare the existence of a function
+        // BNF: "fun" function 
+        // Get the name of the function
+        let global = self.parseVariable("Expect function name.".to_string(), scanner);
+        // You shouldn't be able to self-assign a function
+        self.compilerStack.peek_mut().unwrap().markInitialized();
+        self.function(FunctionType::TYPE_FUNCTION, scanner);
+        self.defineVariable(global);
+    }
+    
+    fn printStatement(&mut self, scanner: &mut Scanner){
+        // BNF: "print" expression ";"
+        self.expression(scanner);
+        self.consume(TokenType::TOKEN_SEMICOLON, "Expect ; after value.".to_string(), scanner);
+        self.emitByte(OpCode::OP_PRINT as u8);
+    }
+
     fn forStatement(&mut self, scanner: &mut Scanner){
-// Out of bounds problem here        
+        // BNF: "for" "(" ( varDecl | exprStmt | ";" )
+        //                   expression? ";"
+        //                   expression? ")" statement 
+        //  for statement has it's own scope. Done here to include looping variables in scope
         self.compilerStack.peek_mut().unwrap().beginScope(); 
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'for'.".to_string(), scanner);
+        // parsing initialization condition
         if self.Match(scanner, TokenType::TOKEN_SEMICOLON){}
         else if self.Match(scanner, TokenType::TOKEN_VAR){
             self.varDeclaration(scanner);
@@ -386,6 +415,8 @@ impl Parser{
             self.expressionStatement(scanner);
         }
         
+        // doing backpatching for the looping part since this is a single pass compiler
+        // You can omit the condition for some reason.
 
         let mut loopStart = self.currentChunk().get_count();
 
@@ -399,7 +430,7 @@ impl Parser{
         } else{
             exitJump = None;
         }
-        
+         
         if  !self.Match(scanner, TokenType::TOKEN_RIGHT_PAREN) {
             let bodyJump = self.emitJump(OpCode::OP_JUMP);
             let incrementStart = self.currentChunk().get_count();
@@ -469,11 +500,6 @@ impl Parser{
         self.emitLoop(loopStart);
         self.patchJump(exitJump);
         self.emitByte(OpCode::OP_POP as u8);
-    }
-
-    fn expression(&mut self, scanner: &mut Scanner,  ) {
-        // interpret an expression
-        self.parsePrecedence(Precedence::PREC_ASSIGNMENT, scanner);
     }
 
     fn grouping(&mut self, scanner: &mut Scanner, _canAssign: bool){
@@ -761,6 +787,7 @@ impl Parser{
     }
 
     fn emitJump(&mut self, new_val: OpCode) -> usize{
+        // Emit a jump instruction, leaving space for the return address to write to later
         self.emitByte(new_val as u8);
         self.emitByte(0xff);
         self.emitByte(0xff);
@@ -856,10 +883,15 @@ impl Parser{
     }
 
     fn function(&mut self, ftype: FunctionType, scanner: &mut Scanner){
+        // BNF: IDENTIFIER "(" parameters? ")" block ;
+        // IDENTIFIER was parsed in funDecl, so that's fine
+
+        // Entering a new function means you need a new compiler
         self.compilerStack.push(Compiler::new(ftype, Some(LoxString::new(self.previous.start.clone()))));
         self.compilerStack.peek_mut().unwrap().beginScope();
-        // declaration
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after function name.".to_string(), scanner);
+        // You parse arguments of the function, checking to make sure that you don't have a
+        // stupidly large number of args and that each argument is a valid variable
         if ! self.check(TokenType::TOKEN_RIGHT_PAREN) {
             loop {
                 self.compilerStack.peek_mut().unwrap().function.as_mut().unwrap().arity += 1;
@@ -875,24 +907,38 @@ impl Parser{
         }
         self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after arguments.".to_string(), scanner);
 
-        //body
         self.consume(TokenType::TOKEN_LEFT_BRACE, "Expect '{' before function body.".to_string(), scanner);
 
+        // block consumes '}', so don't worry about that
         self.block(scanner);
 
+        // Return from the function an store value on stack
         let comp = self.endParser();
         let new_val = Value::VAL_OBJ(Rc::new(RefCell::new(comp.unwrap().function.unwrap())));
         let b = self.makeConstant(new_val);
         self.emitTwoBytes(OpCode::OP_CONSTANT as u8, b);
     }
 
-    fn isAtEnd(&mut self) -> bool{
-        return self.current.ttype == TokenType::TOKEN_EOF
-    }
-
-    fn check(&mut self, expected: TokenType) -> bool {
-        if self.isAtEnd() {return false}
-        return self.current.ttype == expected
+    fn endParser(&mut self) -> Option<Compiler>{
+        // tops off current chunk with return, disassembles if prompted, then pops the compiler
+        // stack to deal with the next function
+        self.emitReturn();
+        let function = &self.compilerStack.peek_mut().unwrap().function;
+        if *DEBUG_PRINT_CODE.get().unwrap(){
+            if !self.hadError{
+                let msg = match &function {
+                    Some(fnc) => match &fnc.name {
+                        Some(v) => v.val.clone(),
+                        None => "<script>".to_string(),
+                    }
+                    None => panic!("Couldn't load function")
+                };
+                let _ = self.currentChunk().disassemble(msg);
+            }
+        }
+        // move up to new compiler
+        let out = self.compilerStack.pop();
+       return out;
     }
 
     fn argumentList(&mut self, scanner: &mut Scanner) -> u8{

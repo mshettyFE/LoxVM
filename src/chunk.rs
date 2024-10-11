@@ -79,6 +79,7 @@ impl Chunk {
     }
 
   pub fn disassemble_instruction(&self, offset: usize) -> Result<usize, String>{
+    // disassembles the code at a particular index in the chunk
     print!("{}",format!("{:04}",offset));
     let found_opcode = self.code.get(offset);
     match found_opcode { // check if offset is out of bounds
@@ -158,6 +159,7 @@ impl Chunk {
   }
 
   fn jump_instruction(&self, name: String, sign: bool, offset: usize) -> Result<usize, String>{
+      // format: name, offset, offset_to_jump_to
       let high_byte: u16 = (*self.code.get(offset+1).unwrap()  as u16) << (8 as u16);
       let low_byte: u16 = *self.code.get(offset+2).unwrap()  as u16;
       let jump: u16 = high_byte | low_byte;
@@ -173,7 +175,6 @@ impl Chunk {
 
   fn byte_instruction(&self, name: String, offset: usize) -> Result<usize, String>{
     // format: OPCODE name value
-    // corresponds to variables
     let slot = match self.code.get(offset+1){
         Some(val) => val,
         None => {
