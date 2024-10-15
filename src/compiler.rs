@@ -416,10 +416,13 @@ impl Parser{
         }
         
         // doing backpatching for the looping part since this is a single pass compiler
+        // This means you can't look ahead to find the end of the loop
         // You can omit the condition for some reason.
 
+        // get starting address of loop
         let mut loopStart = self.currentChunk().get_count();
 
+        // check if you need to be able to exit. If so, backpatch
         let exitJump: Option<usize>;
         if !self.Match(scanner, TokenType::TOKEN_SEMICOLON) {
             self.expression(scanner);
@@ -430,7 +433,8 @@ impl Parser{
         } else{
             exitJump = None;
         }
-         
+        
+        // check if there needs to be a body. If so, backpatch
         if  !self.Match(scanner, TokenType::TOKEN_RIGHT_PAREN) {
             let bodyJump = self.emitJump(OpCode::OP_JUMP);
             let incrementStart = self.currentChunk().get_count();
@@ -444,19 +448,24 @@ impl Parser{
             self.patchJump(bodyJump);
         }
 
+        // The meat of the loop
         self.statement(scanner);
 
+        // back patching the loop
         self.emitLoop(loopStart);
+        // patching the exit condition
         match exitJump {
             Some(offset) => {self.patchJump(offset); self.emitByte(OpCode::OP_POP as u8); ()}
             None => ()
         }
 
+        // for loops close scoping once done
         self.compilerStack.peek_mut().unwrap().endScope();
 
     }
 
     fn ifStatement(&mut self, scanner: &mut Scanner){
+        // back patching if and then jumps
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'if'.".to_string(), scanner);
         self.expression(scanner);
         self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect '(' after condition.".to_string(), scanner);
@@ -474,13 +483,16 @@ impl Parser{
     }
 
     fn returnStatement(&mut self, scanner: &mut Scanner){
+        // make sure you can't return from top level
         if self.compilerStack.peek_mut().unwrap().ftype
             == FunctionType::TYPE_SCRIPT{
             self.errorAt("Can't return from top-level code;".to_string(), ErrorTokenLoc::PREVIOUS);
         }
+        //Can return a nill value like: return ;
         if (self.Match(scanner, TokenType::TOKEN_SEMICOLON)){
             self.emitReturn();
         } else {
+            // otherwise, can return top of stack
             self.expression(scanner);
             self.consume(TokenType::TOKEN_SEMICOLON, "Expect ';' after return value".to_string(), scanner);
             self.emitByte(OpCode::OP_RETURN as u8);
@@ -488,12 +500,12 @@ impl Parser{
     }
 
     fn whileStatement(&mut self, scanner: &mut Scanner){
-// Out of bounds problem here        
         let loopStart = self.currentChunk().get_count();
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'while'.".to_string(), scanner);
         self.expression(scanner);
         self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after 'while' expression.".to_string(), scanner);
-        
+       
+        // more backpatching stuff
         let exitJump = self.emitJump(OpCode::OP_JUMP_IF_FALSE);
         self.emitByte(OpCode::OP_POP as u8);
         self.statement(scanner);
@@ -509,6 +521,7 @@ impl Parser{
     } 
 
     fn call(&mut self, scanner: &mut Scanner, _canAssign: bool){
+        // parse the arguments, and then emit call opcode
         let argCount = self.argumentList(scanner);
         self.emitTwoBytes(OpCode::OP_CALL as u8, argCount);
     }
@@ -615,6 +628,8 @@ impl Parser{
     }
 
     fn resolveLocal(&mut self, name: Token) -> Option<u8>{
+        // walk up the compiler stack until you hit the top or you find a variable with the
+        // semantically matching name
         let mut index: isize =  (self.compilerStack.peek_mut().unwrap().localCount as isize) -1;
         loop {
             if index < 0 {
@@ -623,6 +638,7 @@ impl Parser{
             let local = self.compilerStack.peek_mut().unwrap().locals.get(index as usize).unwrap();
             if local.name.EqualSemantically(name.clone()) {
                 if local.depth.is_none() {
+                    // prevent self initialization
                     self.errorAt("Can't read local variable in it's own initializer".to_string(), ErrorTokenLoc::PREVIOUS);
                 }
                 return Some(index as u8);                
@@ -647,8 +663,7 @@ impl Parser{
                         prefix_func(self, scanner, canAssign);
                     },
                     None => {
-                        panic!("AAAAAA");
-                        self.errorAt("Expect expression".to_string(), ErrorTokenLoc::PREVIOUS);
+                        panic!("Something went horribly wrong");
                         return ;
                     }
                 }
@@ -686,6 +701,7 @@ impl Parser{
                 },
             };
 
+            // execute the infix function
             match prev_rule.infix {
                 Some(function) => function(self, scanner,canAssign),
                 None => {
@@ -708,6 +724,7 @@ impl Parser{
     }
 
     fn defineVariable(&mut self, global: u8, ){
+        // emit variable to vm
         if self.compilerStack.peek_mut().unwrap().scopeDepth > 0{
             self.compilerStack.peek_mut().unwrap().markInitialized();
             return; 
@@ -716,6 +733,7 @@ impl Parser{
     }
 
     fn declareVariable(&mut self, ){
+        // walk up compiler stack and check if variable already exists in the current scope
         if self.compilerStack.peek_mut().unwrap().scopeDepth  == 0 {return ;}
         let sd = self.compilerStack.peek_mut().unwrap().scopeDepth;
         let new_local: Locals = Locals::new(self.previous.clone(), Some(self.compilerStack.peek_mut().unwrap().scopeDepth));
@@ -732,12 +750,14 @@ impl Parser{
     }
 
     fn addLocal(&mut self, mut new_local: Locals){
+        // add local variable to current compiler
         new_local.depth = None;
         self.compilerStack.peek_mut().unwrap().localCount += 1;
         self.compilerStack.peek_mut().unwrap().locals.push(new_local);
     }
 
     fn identifierConstant(&mut self, name: Token) -> u8{
+        // add variable name to chunk
         let str = LoxString::new(name.start);
         let val = Value::VAL_OBJ(Rc::new( RefCell::new(str)));
         self.makeConstant(val)
@@ -782,6 +802,7 @@ impl Parser{
     }
 
     fn emitReturn(&mut self) {
+        // you emit a OP_NIL since you need to cover the case where nothing gets returned
         self.emitByte(OpCode::OP_NIL as u8);
         self.emitByte(OpCode::OP_RETURN as u8);
     }
@@ -795,6 +816,7 @@ impl Parser{
     }
 
     fn patchJump(&mut self, offset: usize){
+        // override the previous two bytes with the new offset
         let jump = self.currentChunk().get_count()-offset-2;
         let high = jump >> 8 & 0xFF;
         let low  = jump & 0xFF;
@@ -803,6 +825,7 @@ impl Parser{
     }
 
     fn emitLoop(&mut self, loopStart: usize){
+        // backpatch loop, like patchJump
         self.emitByte(OpCode::OP_LOOP as u8);
         let offset = self.currentChunk().get_count()- loopStart+2;
         let high = (offset >> 8) & 0xff;
@@ -812,6 +835,7 @@ impl Parser{
     }
     
     pub fn currentChunk(&mut self) -> & mut Chunk{
+        // utility function to get current chunk
         match &mut self.compilerStack.peek_mut().unwrap().function{
             Some(fnc) => {
                 return &mut fnc.chunk
@@ -850,6 +874,7 @@ impl Parser{
     }
 
     fn synchronize(&mut self, scanner: &mut Scanner ){
+        // scramble ahead to next possibly valid token
         self.panicMode = false;
         loop {
             if self.current.ttype == TokenType::TOKEN_EOF {
@@ -874,6 +899,7 @@ impl Parser{
     }
    
     fn block(&mut self, scanner: &mut Scanner ){
+        // consume all declarations until right brace encountered
         loop {
             let cond = self.isAtEnd() || self.check(TokenType::TOKEN_RIGHT_BRACE); 
             if cond {break;}
@@ -942,6 +968,7 @@ impl Parser{
     }
 
     fn argumentList(&mut self, scanner: &mut Scanner) -> u8{
+        // parse arguments of function, checking for arity
         let mut argCount = 0;
         if (!self.check(TokenType::TOKEN_RIGHT_PAREN)){
             loop{

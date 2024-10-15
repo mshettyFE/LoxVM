@@ -3,7 +3,7 @@ use std::{cell::RefCell};
 use std::rc::Rc;
 
 use crate::object::{LoxFunction, NativeFn, Obj, ObjNative};
-use crate::{chunk::{Chunk, OpCode}, object::LoxString, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
+use crate::{chunk::OpCode, object::LoxString, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use crate:: stack::LoxStack;
 use crate::value::*;
 use crate::compiler::*;
@@ -17,6 +17,7 @@ pub enum InterpretResult {
     INTERPRET_RUNTIME_ERROR(String),
 }
 
+// the current function being executed, as well as where in the VM the function starts at
 pub struct CallFrame{
     pub func: Option<Rc<RefCell<LoxFunction>>>,
     pub ip: usize, // ip relative to the current function (so 0 is the start of the current
@@ -32,11 +33,11 @@ impl CallFrame {
 }
 
 pub struct VM{
-    frames: Vec<CallFrame>,
-    frameCount: usize,
+    frames: Vec<CallFrame>, // stores the function stack
+    frameCount: usize, // Top stack pointer to frames
     stk: LoxStack, // value stack 
-    globals: LoxTable,                                    // global vars
-    parser: Parser
+    globals: LoxTable,  // global vars
+    parser: Parser // Bundled here b/c Rust is paranoid
 }
 
 pub fn clockNative(argC: usize, value_index: usize) -> Value{
@@ -53,12 +54,14 @@ impl VM {
         stk: LoxStack::new(),
         parser: Parser::new()
         };
-    
+
+        // native functions get defined here
         x.defineNative(LoxString::new("clock".to_string()), clockNative);
         x
     }
     
     pub fn interpret(&mut self, source: &String) -> InterpretResult { 
+        // entry point for VM
         let mut scanner = Scanner::new(source.to_string());
         self.parser = crate::compiler::Parser::new();
         // compile() returns false if an error occurred.

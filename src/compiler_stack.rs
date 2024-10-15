@@ -1,5 +1,6 @@
 use crate::compiler::{Compiler, FunctionType};
 // shamelessly adapted from https://rust-unofficial.github.io/too-many-lists/second-final.html
+// stack of compilers to allow functions to be implemented
 
 pub struct CompilerStack{
     head: CSLink

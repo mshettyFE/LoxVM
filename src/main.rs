@@ -22,6 +22,7 @@ struct Args{
 
 fn repl(){
     // really bare-bones REPL
+    // This is also super messed up ATM
     print!("Inside REPL\n");
     let mut machine = VM::new();
     let stdin = std::io::stdin();

@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use crate::object::*;
 
+// Represents the possible values which the VM can hold
 #[derive(Clone)]
 pub enum Value {
     VAL_NIL,

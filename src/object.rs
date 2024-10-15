@@ -4,8 +4,6 @@ use std::any::Any;
 use crate::chunk::Chunk;
 use crate::value::Value;
 
-
-
 #[derive(Clone, PartialEq, Debug)]
 pub enum ObjType{
     OBJ_STRING,
@@ -13,20 +11,16 @@ pub enum ObjType{
     OBJ_NATIVE
 }
 
+// OBJ trait which acts kind of like a "base class"
 pub trait Obj {
     fn any(&self) -> &dyn Any;
     fn get_type(&self) -> ObjType; 
     fn print_obj(&self);
 }
 
-pub type NativeFn = fn(usize, usize) -> Value;
 
-#[derive(Clone)]
-pub struct LoxFunction{
-    pub arity: usize,
-    pub chunk: Chunk,
-    pub name: Option<LoxString>,
-}
+// Native function, which takes in the number of parameters expected, and the starting index into the stack
+pub type NativeFn = fn(usize, usize) -> Value;
 
 pub struct ObjNative{
     pub function: NativeFn
@@ -49,6 +43,14 @@ impl Obj for ObjNative{
     fn print_obj(&self){
         print!("<native fn>"); 
     }
+}
+
+// LoxFunction
+#[derive(Clone)]
+pub struct LoxFunction{
+    pub arity: usize, // the number of expected arguments to the function
+    pub chunk: Chunk, // the associated bytecode of the function
+    pub name: Option<LoxString>, // the name of the function
 }
 
 impl Obj for LoxFunction {
@@ -74,6 +76,8 @@ impl LoxFunction {
     }
 }
 
+// Defines a LoxString, which is a wrapper around the Rust String to interface with the rest of the
+// VM
 #[derive(Clone, Debug)]
 pub struct LoxString{
    pub val: String, 
@@ -101,6 +105,7 @@ impl LoxString{
     }
 
     fn gen_hash(val: String) -> u64{
+        // simple hash function called "FNV-1a". 
         let mut hash: u64 = 2166136261;
         for byte in val.as_bytes(){
             hash ^= *byte as u64;
