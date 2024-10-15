@@ -1,5 +1,5 @@
 #![allow(non_camel_case_types)]
-use std::{cell::RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::object::{LoxFunction, NativeFn, Obj, ObjNative};
@@ -40,7 +40,7 @@ pub struct VM{
     parser: Parser // Bundled here b/c Rust is paranoid
 }
 
-pub fn clockNative(argC: usize, value_index: usize) -> Value{
+pub fn clockNative(_argC: usize, _value_index: usize) -> Value{
     let time =     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
     Value::VAL_NUMBER(time)
 }
@@ -64,15 +64,17 @@ impl VM {
         // entry point for VM
         let mut scanner = Scanner::new(source.to_string());
         self.parser = crate::compiler::Parser::new();
-        // compile() returns false if an error occurred.
+        // compile() returns false if a compilation error occurred.
         match self.parser.compile(&mut scanner){
             None => return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string()),
             Some(comp) => {
                 self.stk.push(Value::VAL_OBJ(Rc::new(RefCell::new(comp.function.unwrap())).clone()));
+                // this callValue simple executes the top level function
                 match self.callValue(self.stk.peek(0).unwrap(), 0){
                         Err(str) => { return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str)))}
                         Ok(()) => {()}
                 }
+                // run the top level function
                 let res = self.run();
                 return res;
             }
@@ -97,9 +99,9 @@ impl VM {
                         }
                     }
                  }
-                 None => panic!("DEBUG_TRACE_EXEC is somehow empty"),
-                
+                 None => panic!("DEBUG_TRACE_EXEC is somehow empty"), 
              }
+             // get current instruction to run in the current chunk
              let instruction_number  = match self.read_byte(){
                 Ok(val) => val,
                 Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",err_msg))),
@@ -110,7 +112,6 @@ impl VM {
                  Some(val) => val,
                 None => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Invalid conversion  to OpCode attempted: {}", instruction_number))),       
             };
-//            println!("Cur Frame {}, MaxFrames {}", self.frameCount, self.frames.len());
             match opcode { //finally, dispatch to the correct opcode
                 OpCode::OP_PRINT => {
                     match self.stk.pop(){
@@ -122,48 +123,47 @@ impl VM {
                      }
                  }
                 OpCode::OP_LOOP => {
-                    let offset = self.read_short();
+                    let offset = self.read_short(); // How many addresses back do we need to jump
+                                                    // backwards
                     self.getCurrentFunction().unwrap().ip -= offset as usize;
                 }
-                OpCode::OP_JUMP =>{
-                    let offset = self.read_short();
+                OpCode::OP_JUMP =>{ // unconditional jump
+                    let offset = self.read_short(); // How many addresses do we need to jump ahead
                     self.getCurrentFunction().unwrap().ip += offset as usize;
                 }
                 OpCode::OP_JUMP_IF_FALSE => {
                     let offset = self.read_short();
-                    if isFalsey(self.stk.peek(0).unwrap()) {
+                    if isFalsey(self.stk.peek(0).unwrap()) { // If top of stack if false, jump
+                                                             // ahead
                         self.getCurrentFunction().unwrap().ip += offset as usize;
                     }
                 },
-                OpCode::OP_CALL => {
-                    //println!("Function  Depth {}", self.frameCount);
+                OpCode::OP_CALL => { // execute the function
                     let argCount = self.read_byte().unwrap();
                     match (self.callValue(self.stk.peek(argCount as usize).unwrap(), argCount)){
                         Err(str) => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str)))}
                         Ok(()) => {()}
                     }
                 }
-                OpCode::OP_RETURN => {
+                OpCode::OP_RETURN => { // return from function
                     let result = self.stk.pop();
+                    // clean up the stack to until the current function call gets erased
                     let current_pointer = self.getCurrentFunction().unwrap().starting_index;
-/*
-                    for frame in self.frames.iter(){
-                        println!("FuncStart {}", frame.starting_index);
-                    }
-                    println!("Returning from. FrameCount {}, TotalFrames {}, Stack Size {}, cur_ptr {}", self.frameCount , self.frames.len(),  self.stk.size(), current_pointer);
-*/
                     while self.stk.size() > current_pointer{
                         self.stk.pop();
                     }
+                    // Pop from the call stack
                     self.frameCount -= 1;
                     self.frames.pop();
+                    // If at the base, then you need to exit from the program
                     if (self.frameCount == 0){
-                        self.stk.pop();
+                        self.stk.pop(); // remove the stray NIL value from the stack
                         return InterpretResult::INTERPRET_OK
                     }
+                    // add the return value to the VM value stack
                     self.stk.push(result.unwrap());
                 },
-                OpCode::OP_CONSTANT => {
+                OpCode::OP_CONSTANT => { // add constant to stack
                   let constant: Value = self.read_constant();
                  self.stk.push(constant.clone());
                },
@@ -179,17 +179,16 @@ impl VM {
                OpCode::OP_POP => {
                     self.stk.pop();
                }
-               OpCode::OP_GET_LOCAL => {
+               OpCode::OP_GET_LOCAL => { // get local variable, and push to stack
                     let slot = match self.read_byte() {
                         Ok(val) => val,
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",err_msg))),
                     };
                     let cur_frame = self.getCurrentFunction().unwrap();
                     let index = cur_frame.starting_index + slot as usize +1;
-//                    println!("ABS Index {}, starting {}, slot {}", index, cur_frame.starting_index, slot);
                     self.stk.push(self.stk.get(index).unwrap());
                }
-               OpCode::OP_SET_LOCAL => {
+               OpCode::OP_SET_LOCAL => { // get location of variable in stack, then update value
                     let slot = match self.read_byte() {
                         Ok(val) => val,
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",err_msg))),
@@ -199,7 +198,8 @@ impl VM {
 //                    println!("ABS Index {}, starting {}, slot {}", index, cur_frame.starting_index, slot);
                     self.stk.set(index, self.stk.peek(0).unwrap());
                }
-               OpCode::OP_GET_GLOBAL => {
+               OpCode::OP_GET_GLOBAL => { // get value of global variable from the global hash
+                                          // table
                     let name: Value =  self.read_constant();
                     let key: LoxString;
                     match name {
@@ -221,7 +221,7 @@ impl VM {
                         }
                      }
                }
-               OpCode::OP_DEFINE_GLOBAL => {
+               OpCode::OP_DEFINE_GLOBAL => { // Creating a new global variable 
                     let name: Value = self.read_constant();
                     match name {
                         Value::VAL_OBJ(pointer_stuff) => {
@@ -235,7 +235,7 @@ impl VM {
                     } 
                     self.stk.pop();
                }
-               OpCode::OP_SET_GLOBAL => {
+               OpCode::OP_SET_GLOBAL => { // updating an existing variable
                     let name: Value = self.read_constant();
                     match name {
                         Value::VAL_OBJ(pointer_stuff) => {
@@ -249,7 +249,7 @@ impl VM {
                         _ => { return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}","Tried accessing a global")));}
                     } 
                }
-               OpCode::OP_EQUAL => {
+               OpCode::OP_EQUAL => { // check if top two values of stack are equal
                    let a = match self.stk.peek(0){
                         Some(val) => {val},
                         None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{} {}","Stack can't be accessed at", 0)));},
@@ -260,7 +260,7 @@ impl VM {
                     };
                    self.stk.push(Value::VAL_BOOL(valuesEqual(a, b)));
                },
-               OpCode::OP_GREATER => {
+               OpCode::OP_GREATER => { // same as OP_EQUAL, but greater
                    let a = match self.stk.peek(0){
                         Some(val) => {
                             match val {
@@ -281,7 +281,7 @@ impl VM {
                     };
                    self.stk.push(Value::VAL_BOOL(b> a));
                },
-               OpCode::OP_LESS => {
+               OpCode::OP_LESS => { // same as OP_EQUAL, but less than
                    let a = match self.stk.peek(0){
                         Some(val) => {
                             match val {
@@ -302,7 +302,7 @@ impl VM {
                     };
                    self.stk.push(Value::VAL_BOOL(b< a));
                },
-               OpCode::OP_NEGATE => {
+               OpCode::OP_NEGATE => { // replace top value in stack with the negation
                     let peek_val = match self.stk.peek(0) {
                         Some(v) => v,
                         None => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Stack is empty"))),
@@ -320,7 +320,7 @@ impl VM {
                         }
                      }
                },
-               OpCode::OP_ADD => {
+               OpCode::OP_ADD => { // addition of strings and numbers
                    // check if top of stack are both strings
                    let a_string: Result<String, String> = match self.peek_stack(0, 
                        std::mem::discriminant(&Value::VAL_OBJ(Rc::new(RefCell::new(LoxString::new("".to_string())))))){
@@ -349,7 +349,7 @@ impl VM {
                             self.stk.push(Value::VAL_OBJ(Rc::new(RefCell::new(LoxString::new(new_string)) )));
                         } 
                    else{
-                        // doing floating point compariso
+                        // doing floating point comparison
                        let a_float: Result<f64,String> = match self.peek_stack(0, std::mem::discriminant(&Value::VAL_NUMBER(0.0))){
                             Ok(val) => { match val { Value::VAL_NUMBER(v) => Ok(v), _ => {panic!("Unreachable");}}}
                             Err(err_msg) => {Err(err_msg)},
@@ -401,7 +401,7 @@ impl VM {
                             return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Operands must be two numbers or two strings."))); 
                         }
                },
-               OpCode::OP_NOT => {
+               OpCode::OP_NOT => { // add the logical negation of top of stack
                    let val = self.stk.pop().unwrap();
                     self.stk.push(Value::VAL_BOOL(isFalsey(val)));
                }
@@ -410,6 +410,8 @@ impl VM {
     }
 
     fn callValue(&mut self, callee: Value, argCount: u8)-> Result<(),String>{
+        // This is a wrapper around Call. It does type checking on the input Value to make sure
+        // it's a callable
         match callee {
             Value::VAL_OBJ(obj_ptr) => {
                 let obj = obj_ptr.borrow();
@@ -418,8 +420,8 @@ impl VM {
                         return self.Call(obj_ptr.clone(), argCount);
                     },
                     crate::object::ObjType::OBJ_NATIVE => {
-                        // the value argument is wrong, but IDK
                         let fn_start = self.stk.size()- argCount as usize;
+                        // execute the native function and  push the result onto the VM stack
                         let result = (obj.any().downcast_ref::<ObjNative>().unwrap().function)(argCount as usize, fn_start);
                         while (self.stk.size() > fn_start){
                             self.stk.pop();
@@ -436,6 +438,8 @@ impl VM {
     }
 
     fn Call(&mut self, function_wrapper: Rc<RefCell<dyn Obj>> , argCount: u8) -> Result<(),String>{
+        // This does runtime checking that the number of input arguments matches the arity of the
+        // function
         self.frameCount += 1;
         if(self.frameCount == 255){
             return Err("Stack overflow.".to_string());
@@ -444,6 +448,7 @@ impl VM {
         if argCount as usize != function.any().downcast_ref::<LoxFunction>().unwrap().arity {
             return Err(format!("Expected {} arguments but got {}.",function.any().downcast_ref::<LoxFunction>().unwrap().arity, argCount));
         }
+        // Adds a new frame to the call stack
         self.frames.push(
             CallFrame::new(Rc::new(RefCell::new(function.any().downcast_ref::<LoxFunction>().unwrap().clone())),
             self.stk.size() - argCount as usize -1 )
@@ -452,6 +457,8 @@ impl VM {
     } 
 
     fn read_byte(&mut self) -> Result<u8, String> {
+        // read one instruction from the current chunk
+        // also advance ip by 1
         let frame = self.getCurrentFunction();
         let f = frame.unwrap();
         let output: Result<u8,String>;
@@ -473,6 +480,7 @@ impl VM {
     }
  
     fn peek_stack(&mut self,  index :usize, expected: std::mem::Discriminant<Value>) -> Result<Value, String> {
+        // check if top of stack matches the expected type
         let b = match self.stk.peek(index){
             Some(v) => {
                 // value matches expected value
@@ -488,10 +496,11 @@ impl VM {
     }
 
     fn formatRunTimeError(&mut self, formatted_message: fmt::Arguments) -> String{
+        // pretty printing runtime errors
         let err_msg = format!("{}\n",formatted_message);
         let frame = self.getCurrentFunction().unwrap();
-        let instruction = frame.ip - 1;
         // ip points to the NEXT instruction to be executed, so need to decrement ip by 1
+        let instruction = frame.ip - 1;
         let line: usize;
         match &frame.func{
             Some(fnc) => {
@@ -554,6 +563,8 @@ impl VM {
     }
 
     fn defineNative(&mut self, name: LoxString, function: NativeFn){
+        // The pushes and pops are weird garbage collector things that aren't really necessary in
+        // a Rust-based VM
         self.stk.push(Value::VAL_OBJ(Rc::new( RefCell::new(name.clone()))));
         self.stk.push(Value::VAL_OBJ(Rc::new( RefCell::new(ObjNative::new(function)))));
         self.globals.insert( name, self.stk.get(1).unwrap());
@@ -562,6 +573,7 @@ impl VM {
     }
 
     fn read_short(&mut self) -> u16{
+        // read the next two bytes in the chunk, incrementing the ip as needed
         self.getCurrentFunction().unwrap().ip += 2;
         let ip = self.getCurrentFunction().unwrap().ip;
         let higher_byte: u16;
@@ -588,6 +600,7 @@ impl VM {
     }
 
     fn read_constant(&mut self) -> Value {
+        // read a value from the chunk and return the value. Don't mess with the stack
         let index = self.read_byte().unwrap();
         let frame = self.getCurrentFunction().unwrap();
         let output: Value;
@@ -608,6 +621,7 @@ impl VM {
     }
 
     fn getCurrentFunction(&mut self) -> Option<&mut CallFrame>{
+        // helper function to get the top CallFrame
         self.frames.get_mut(self.frameCount-1)
     }
 }
