@@ -1,44 +1,33 @@
 use crate::compiler::{Compiler, FunctionType};
-// shamelessly adapted from https://rust-unofficial.github.io/too-many-lists/second-final.html
 // stack of compilers to allow functions to be implemented
 
 pub struct CompilerStack{
-    head: CSLink
+    array: Vec<Compiler>
 }
 
-type CSLink = Option<Box<Node>>;
-
-struct Node{
-    elem: Compiler,
-    next: CSLink
-
-}
-
-impl CompilerStack {
+impl CompilerStack{
     pub fn new() -> Self{
-        let mut a =  CompilerStack{head: None};
+        let mut a: Vec<Compiler> = Vec::new();
         a.push(Compiler::new(FunctionType::TYPE_SCRIPT, None));
-        a
+        CompilerStack { array: a }
     }
-    
+
     pub fn push(&mut self, val: Compiler){
-        let new_node = Box::new(Node {
-            elem: val,
-            next: self.head.take(),
-        });
-        self.head = Some(new_node);
-    }
+        self.array.push(val);
+   }
 
     pub fn pop(&mut self) -> Option<Compiler> {
-         self.head.take().map(|node| {
-            self.head = node.next;
-            node.elem
-        })
-    }
+        match self.array.pop() {
+            Some(comp) => {
+                return Some(comp)
+            },
+            None => return None
+        }
+   }
 
     pub fn peek_mut(&mut self) -> Option<&mut Compiler>{
-        self.head.as_mut().map(|node| {
-            &mut node.elem
-        })
-    }
+        let cur_size = self.array.len()-1;
+        self.array.get_mut( cur_size)
+   }
+
 }
