@@ -30,6 +30,7 @@ pub enum OpCode {
     OP_JUMP_IF_FALSE,
     OP_LOOP,
     OP_CALL,
+    OP_CLOSURE,
     OP_RETURN,
 }
 
@@ -98,6 +99,13 @@ impl Chunk {
                 let new_offset = match instr{ // dispatch to different output based on instr
                     OpCode::OP_PRINT => self.simple_instruction("OP_PRINT".to_string(), offset)?,
                     OpCode::OP_CALL => self.byte_instruction("OP_CALL".to_string(), offset)?,
+                    OpCode::OP_CLOSURE => {
+                        let mut cur_offset = offset + 1;
+                        let constant = self.get_instr(cur_offset).unwrap();
+                        cur_offset += 1;
+                        println!("{} {} {:?}", "OP_CLOSURE", constant, self.get_constant(*constant as usize).unwrap());
+                        return Ok(cur_offset);
+                    },
                     OpCode::OP_RETURN => self.simple_instruction("OP_RETURN".to_string(), offset)?,
                     OpCode::OP_NIL => self.simple_instruction("OP_NIL".to_string(), offset)?,
                     OpCode::OP_TRUE => self.simple_instruction("OP_TRUE".to_string(), offset)?,

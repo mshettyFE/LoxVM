@@ -2,7 +2,7 @@
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::compiler_stack::CompilerStack;
-use crate::object::{LoxFunction, LoxString};
+use crate::object::{LoxClosure,LoxFunction, LoxString};
 use crate::scanner::{Token, TokenType, Scanner};
 use crate::chunk::{Chunk, OpCode};
 use crate::value::Value;
@@ -942,7 +942,7 @@ impl Parser{
         let comp = self.endParser();
         let new_val = Value::VAL_OBJ(Rc::new(RefCell::new(comp.unwrap().function.unwrap())));
         let b = self.makeConstant(new_val);
-        self.emitTwoBytes(OpCode::OP_CONSTANT as u8, b);
+        self.emitTwoBytes(OpCode::OP_CLOSURE as u8, b);
     }
 
     fn endParser(&mut self) -> Option<Compiler>{

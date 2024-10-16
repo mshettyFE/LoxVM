@@ -4,11 +4,12 @@ use std::any::Any;
 use crate::chunk::Chunk;
 use crate::value::Value;
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone,Debug, PartialEq)]
 pub enum ObjType{
     OBJ_STRING,
     OBJ_FUNCTION,
-    OBJ_NATIVE
+    OBJ_NATIVE,
+    OBJ_CLOSURE
 }
 
 // OBJ trait which acts kind of like a "base class"
@@ -42,6 +43,34 @@ impl Obj for ObjNative{
     
     fn print_obj(&self){
         print!("<native fn>"); 
+    }
+}
+
+#[derive(Clone)]
+pub struct LoxClosure{
+    pub function: Option<LoxFunction>
+}
+
+impl Obj for LoxClosure{
+    fn any(&self) -> &dyn Any{
+        self
+    }
+    fn get_type(&self) -> ObjType{
+       return ObjType::OBJ_CLOSURE 
+    }
+    
+    fn print_obj(&self){
+        match &self.function {
+            Some(v) => v.print_obj(),
+            None => print!("CLOSURE_NONE")
+        }
+    }
+}
+
+impl LoxClosure{
+    pub fn new(new_func: Option<LoxFunction>) -> Self{
+        LoxClosure{function: new_func}
+
     }
 }
 

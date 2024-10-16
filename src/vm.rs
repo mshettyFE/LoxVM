@@ -2,7 +2,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::object::{LoxFunction, NativeFn, Obj, ObjNative};
+use crate::object::{LoxClosure, LoxFunction, NativeFn, Obj, ObjNative};
 use crate::{chunk::OpCode, object::LoxString, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use crate:: stack::LoxStack;
 use crate::value::*;
@@ -19,7 +19,7 @@ pub enum InterpretResult {
 
 // the current function being executed, as well as where in the VM the function starts at
 pub struct CallFrame{
-    pub func: Option<Rc<RefCell<LoxFunction>>>,
+    pub closure: Option<Rc<RefCell<LoxClosure>>>,
     pub ip: usize, // ip relative to the current function (so 0 is the start of the current
                          // function, which has no relationship to other functions due to how the
                          // call stack is structured)
@@ -27,8 +27,8 @@ pub struct CallFrame{
 }
 
 impl CallFrame {
-    pub fn new(function: Rc<RefCell<LoxFunction>>, new_starting_index: usize) -> Self{
-        CallFrame{func: Some(function), ip: 0, starting_index: new_starting_index} 
+    pub fn new(cls: Rc<RefCell<LoxClosure>>, new_starting_index: usize) -> Self{
+        CallFrame{closure: Some(cls), ip: 0, starting_index: new_starting_index} 
     }
 }
 
@@ -68,7 +68,7 @@ impl VM {
         match self.parser.compile(&mut scanner){
             None => return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string()),
             Some(comp) => {
-                self.stk.push(Value::VAL_OBJ(Rc::new(RefCell::new(comp.function.unwrap())).clone()));
+                self.stk.push(Value::VAL_OBJ(Rc::new(RefCell::new(LoxClosure::new(Some(comp.function.unwrap())))).clone()));
                 // this callValue simple executes the top level function
                 match self.callValue(self.stk.peek(0).unwrap(), 0){
                         Err(str) => { return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str)))}
@@ -89,14 +89,19 @@ impl VM {
                      if *val {
                         self.stk.print();
                         let frame = self.getCurrentFunction().unwrap();
-                        match &frame.func {
-                            Some(fun) => {
-                                let _ = fun.borrow().chunk.disassemble_instruction(frame.ip);
-                            }
-                            None => {
-                                panic!("AAAAAAAAA");
-                            }
-                        }
+                        match &frame.closure {
+                            Some(cls) => {
+                                match &cls.borrow().function{
+                                    Some(fun) => {
+                                        let _ = fun.chunk.disassemble_instruction(frame.ip);
+                                    }
+                                    None => {
+                                        panic!("AAAAAAAAA");
+                                    } 
+                                }
+                            },
+                            None => panic!("AAAAAAAA")
+                       }
                     }
                  }
                  None => panic!("DEBUG_TRACE_EXEC is somehow empty"), 
@@ -144,7 +149,19 @@ impl VM {
                         Err(str) => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str)))}
                         Ok(()) => {()}
                     }
-                }
+                },
+                OpCode::OP_CLOSURE => {
+                    match self.read_constant(){
+                        Value::VAL_OBJ(pointer_stuff) => {
+                            let ptr = pointer_stuff.borrow();
+                            let func = ptr.any().downcast_ref::<LoxFunction>().unwrap().clone();
+                            self.stk.push(Value::VAL_OBJ(Rc::new( RefCell::new(LoxClosure::new(Some(func)))  )));
+                         }
+                        _ => {
+                            panic!("AAAAAAAAAAAAAAAAA");
+                        }
+                   }
+               }
                 OpCode::OP_RETURN => { // return from function
                     let result = self.stk.pop();
                     // clean up the stack to until the current function call gets erased
@@ -416,9 +433,12 @@ impl VM {
             Value::VAL_OBJ(obj_ptr) => {
                 let obj = obj_ptr.borrow();
                 match obj.get_type() {
-                    crate::object::ObjType::OBJ_FUNCTION => {
+                    crate::object::ObjType::OBJ_CLOSURE => {
                         return self.Call(obj_ptr.clone(), argCount);
                     },
+                    crate::object::ObjType::OBJ_FUNCTION => {
+                        return self.Call(obj_ptr.clone(), argCount);
+                   },
                     crate::object::ObjType::OBJ_NATIVE => {
                         let fn_start = self.stk.size()- argCount as usize;
                         // execute the native function and  push the result onto the VM stack
@@ -437,20 +457,21 @@ impl VM {
         return Err("Can only call functions and classes.".to_string());
     }
 
-    fn Call(&mut self, function_wrapper: Rc<RefCell<dyn Obj>> , argCount: u8) -> Result<(),String>{
+    fn Call(&mut self, closure_wrapper: Rc<RefCell<dyn Obj>> , argCount: u8) -> Result<(),String>{
         // This does runtime checking that the number of input arguments matches the arity of the
         // function
         self.frameCount += 1;
         if(self.frameCount == 255){
             return Err("Stack overflow.".to_string());
         }
-        let function = function_wrapper.borrow();
-        if argCount as usize != function.any().downcast_ref::<LoxFunction>().unwrap().arity {
-            return Err(format!("Expected {} arguments but got {}.",function.any().downcast_ref::<LoxFunction>().unwrap().arity, argCount));
+        let closure = closure_wrapper.borrow();
+        if argCount as usize !=
+            closure.any().downcast_ref::<LoxClosure>().unwrap().function.clone().unwrap().arity {
+            return Err(format!("Expected {} arguments but got {}.",closure.any().downcast_ref::<LoxFunction>().unwrap().arity, argCount));
         }
         // Adds a new frame to the call stack
         self.frames.push(
-            CallFrame::new(Rc::new(RefCell::new(function.any().downcast_ref::<LoxFunction>().unwrap().clone())),
+            CallFrame::new(Rc::new(RefCell::new(closure.any().downcast_ref::<LoxClosure>().unwrap().clone())),
             self.stk.size() - argCount as usize -1 )
         );
         return Ok(());
@@ -462,21 +483,25 @@ impl VM {
         let frame = self.getCurrentFunction();
         let f = frame.unwrap();
         let output: Result<u8,String>;
-        match &f.func {
-            Some(fnc) => {
-                match fnc.borrow().chunk.get_instr(f.ip) {
-                    Some(val) => output = Ok(*val),
-                    None => {
-                    let err_msg = format!("Out of bounds access of code: {}", f.ip);
-//                    panic!("{}", err_msg);
-                    return Err(err_msg);
-                    }
+        match &f.closure {
+            Some(cls) =>{
+                match &cls.borrow().function{
+                    Some(fnc) => {
+                        match fnc.chunk.get_instr(f.ip) {
+                            Some(val) => output = Ok(*val),
+                            None => {
+                                let err_msg = format!("Out of bounds access of code: {}", f.ip);
+                                return Err(err_msg);
+                            }
+                        }
+                        f.ip += 1;
+                    },
+                    None => panic!("AAAAAAAAAAAA"),
                 }
-                f.ip += 1;
             },
-            None => panic!("AAAAAAAAAAAA"),
+            None => panic!("AAAAAAAAA")
         }
-        return output;
+       return output;
     }
  
     fn peek_stack(&mut self,  index :usize, expected: std::mem::Discriminant<Value>) -> Result<Value, String> {
@@ -502,29 +527,39 @@ impl VM {
         // ip points to the NEXT instruction to be executed, so need to decrement ip by 1
         let instruction = frame.ip - 1;
         let line: usize;
-        match &frame.func{
-            Some(fnc) => {
-               match fnc.borrow().chunk.get_line(instruction) {
+        match &frame.closure{
+            Some(cls) => {
+                match &cls.borrow().function{
+                    Some(fnc) => {
+                        match fnc.chunk.get_line(instruction) {
+                            None => {
+                                panic!("AAAAA");
+                            }
+                            Some(val) => {line =  val.clone();} 
+                        }
+                    },
                     None => {
-                        panic!("AAAAA");
+                        panic!("Invalid function");
                     }
-                    Some(val) => {line =  val.clone();} 
-               }
+                }
             },
-            None => {
-                panic!("Invalid function");
-            }
+            None => panic!("AAAAAAAA")
         }
-        let fname =  match &frame.func{
-            Some(function) => {
-                match &function.borrow().name{
-                    Some(name) => name.val.clone(),
-                    None => "script".to_string(),
+        let fname = match &frame.closure{
+            Some(cls) => {
+                match &cls.borrow().function{
+                    Some(function) => {
+                        match &function.name{
+                            Some(name) => name.val.clone(),
+                            None => "script".to_string(),
+                        }
+                    },
+                    None => "script".to_string()
                 }
             },
             None => "script".to_string()
         };
-        let line_err = format!("[line {}] in {}\n", line, fname);
+       let line_err = format!("[line {}] in {}\n", line, fname);
 
         // stack trace
         let mut cur_frame = self.frameCount-1;
@@ -535,22 +570,26 @@ impl VM {
                     panic!("AAAAAAAAAAAAAAA");
                 }
                 Some(frame) =>{
-                    match &frame.func{
-                        None => panic!("AAAAAAAAAA"),
-                        Some(function) => {
-                            let f = function.borrow();                    
-                            let instr = frame.ip;
-                            let line_num = f.chunk.get_line(instr);
-                            stack_trace = format!("{}[line {}] in", stack_trace, line_num.unwrap());
-                            match &f.name{
-                                None => {
-                                    stack_trace = format!("{} script\n",stack_trace );
-                                }
-                                Some(string) => {
-                                    stack_trace = format!("{} {}()\n",stack_trace, string.val.clone() );
+                    match &frame.closure{
+                        Some(cls) => {
+                            match &cls.borrow().function{
+                                None => panic!("AAAAAAAAAA"),
+                                Some(function) => {
+                                    let instr = frame.ip;
+                                    let line_num = function.chunk.get_line(instr);
+                                    stack_trace = format!("{}[line {}] in", stack_trace, line_num.unwrap());
+                                    match &function.name{
+                                        None => {
+                                            stack_trace = format!("{} script\n",stack_trace );
+                                        }
+                                        Some(string) => {
+                                            stack_trace = format!("{} {}()\n",stack_trace, string.val.clone() );
+                                        }
+                                    }
                                 }
                             }
-                        }
+                        },
+                        None => panic!("AAAAAAAAAA")
                     }
                 }
             }
@@ -578,23 +617,28 @@ impl VM {
         let ip = self.getCurrentFunction().unwrap().ip;
         let higher_byte: u16;
         let lower_byte: u16;
-        match &self.getCurrentFunction().unwrap().func {
-            Some(fnc) => {
-                match fnc.borrow().chunk.get_instr(ip-2) {
-                    Some(val) => higher_byte = *val as u16,
-                    None => {
-                        panic!("Out of bounds access of code: {}", ip);
-                    }
+        match &self.getCurrentFunction().unwrap().closure {
+            Some(cls) => {
+                match &cls.borrow().function {
+                    Some(fnc) => {
+                        match fnc.chunk.get_instr(ip-2) {
+                            Some(val) => higher_byte = *val as u16,
+                            None => {
+                                panic!("Out of bounds access of code: {}", ip);
+                            }
+                        }
+                        match fnc.chunk.get_instr(ip-1){
+                            Some(val) => lower_byte = *val as u16,
+                            None => {
+                                panic!("Out of bounds access of code: {}", ip);
+                            }
+                        }
+                    },
+                    None => panic!("AAAAAAAAAAAA"),
                 }
-                match fnc.borrow().chunk.get_instr(ip-1){
-                    Some(val) => lower_byte = *val as u16,
-                    None => {
-                        panic!("Out of bounds access of code: {}", ip);
-                    }
-                }
-            },
-            None => panic!("AAAAAAAAAAAA"),
-        }
+            }
+            None => panic!("AAAAAAAAA")
+       }
         return  (higher_byte << 8 ) | lower_byte;
 
     }
@@ -604,15 +648,18 @@ impl VM {
         let index = self.read_byte().unwrap();
         let frame = self.getCurrentFunction().unwrap();
         let output: Value;
-        match &frame.func{
-            Some(fnc) => {
-               match fnc.borrow().chunk.get_constant(index as usize) {
-                    None => {
-                        panic!("Out of bounds access of code: {}", frame.ip);
-                    }
-                    Some(val) => {output =  val.clone();} 
+        match &frame.closure{
+            Some(cls) => {
+               match &cls.borrow().function{
+                   Some(fnc) => {
+                       match fnc.chunk.get_constant(index as usize) {
+                           None => {panic!("Out of bounds access of code: {}", frame.ip);}
+                           Some(val) => {output =  val.clone();} 
+                       }
+                   },
+                   None => panic!("AAAA"),
                }
-            },
+            }
             None => {
                 panic!("Invalid function");
             }
