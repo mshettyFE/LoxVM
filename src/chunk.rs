@@ -1,6 +1,7 @@
 #![allow(non_camel_case_types)]
 
 use crate::value::{Value, ValueArray};
+use crate::object::LoxFunction;
 
 // Growing list of supported opcodes
 #[derive(FromPrimitive)]
@@ -13,6 +14,8 @@ pub enum OpCode {
     OP_POP,
     OP_GET_GLOBAL,
     OP_GET_LOCAL,
+    OP_GET_UPVALUE,
+    OP_SET_UPVALUE,
     OP_DEFINE_GLOBAL,
     OP_SET_GLOBAL,
     OP_SET_LOCAL,
@@ -104,6 +107,30 @@ impl Chunk {
                         let constant = self.get_instr(cur_offset).unwrap();
                         cur_offset += 1;
                         println!("{} {} {:?}", "OP_CLOSURE", constant, self.get_constant(*constant as usize).unwrap());
+                        match self.get_constant(*constant as usize){
+                            Some(val) => {
+                                match val{
+                                    Value::VAL_OBJ(pointer_stuff) => {
+                                        let ptr = pointer_stuff.borrow();
+                                        let func = ptr.any().downcast_ref::<LoxFunction>().unwrap().clone();
+                                        for _i in 0..func.upvalueCount{
+                                            let isLocal = self.get_instr(cur_offset).unwrap();
+                                            cur_offset += 1;
+                                            let index = self.get_instr(cur_offset).unwrap();
+                                            cur_offset += 1;
+                                            let var_type = match isLocal{
+                                                1 => "local",
+                                                0 => "upvalue",
+                                                _ => panic!("AAA")
+                                            };
+                                            print!("{} | {} {}", cur_offset-2, var_type, index);
+                                        }
+                                    },
+                                    _ => panic!("AAAAAA")
+                                }
+                             },
+                            None => {}
+                        }
                         return Ok(cur_offset);
                     },
                     OpCode::OP_RETURN => self.simple_instruction("OP_RETURN".to_string(), offset)?,
@@ -116,6 +143,8 @@ impl Chunk {
                     OpCode::OP_SET_GLOBAL => self.constant_instruction("OP_SET_GLOBAL".to_string(), offset)?,
                     OpCode::OP_GET_LOCAL => self.byte_instruction("OP_GET_LOCAL".to_string(), offset)?,
                     OpCode::OP_SET_LOCAL => self.byte_instruction("OP_SET_LOCAL".to_string(),offset)?,
+                    OpCode::OP_GET_UPVALUE => self.byte_instruction("OP_SET_UPVALUE".to_string(),offset)?,
+                    OpCode::OP_SET_UPVALUE => self.byte_instruction("OP_SET_UPVALUE".to_string(),offset)?,
                     OpCode::OP_JUMP => self.jump_instruction("OP_JUMP".to_string(), true , offset)?,
                     OpCode::OP_LOOP => self.jump_instruction("OP_LOOP".to_string(), false, offset)?,
                     OpCode::OP_JUMP_IF_FALSE => self.jump_instruction("OP_JUMP_IF_FALSE".to_string(), true , offset)?,

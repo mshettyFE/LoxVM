@@ -9,7 +9,8 @@ pub enum ObjType{
     OBJ_STRING,
     OBJ_FUNCTION,
     OBJ_NATIVE,
-    OBJ_CLOSURE
+    OBJ_CLOSURE,
+    OBJ_UPVALUE
 }
 
 // OBJ trait which acts kind of like a "base class"
@@ -48,7 +49,9 @@ impl Obj for ObjNative{
 
 #[derive(Clone)]
 pub struct LoxClosure{
-    pub function: Option<LoxFunction>
+    pub function: Option<LoxFunction>,
+    pub upvalues: Vec<Option<Box<ObjUpvalue>>>,
+    pub upvalueCount: usize
 }
 
 impl Obj for LoxClosure{
@@ -68,8 +71,14 @@ impl Obj for LoxClosure{
 }
 
 impl LoxClosure{
-    pub fn new(new_func: Option<LoxFunction>) -> Self{
-        LoxClosure{function: new_func}
+    pub fn new(new_func: LoxFunction) -> Self{
+        let mut a: Vec<Option<Box<ObjUpvalue>>> = Vec::new();
+        for _ in 0..new_func.upvalueCount{
+            a.push(None);
+        }
+        LoxClosure{function: Some(new_func.clone()),
+        upvalues: a,
+        upvalueCount: new_func.upvalueCount}
 
     }
 }
@@ -80,6 +89,7 @@ pub struct LoxFunction{
     pub arity: usize, // the number of expected arguments to the function
     pub chunk: Chunk, // the associated bytecode of the function
     pub name: Option<LoxString>, // the name of the function
+    pub upvalueCount: usize                             // number of upvalues the function needs access to
 }
 
 impl Obj for LoxFunction {
@@ -101,7 +111,7 @@ impl Obj for LoxFunction {
 
 impl LoxFunction {
     pub fn new(n_arity: usize, new_name: Option<LoxString>) -> Self{
-        LoxFunction{arity: n_arity, chunk: Chunk::new(), name: new_name}
+        LoxFunction{arity: n_arity, chunk: Chunk::new(), name: new_name, upvalueCount: 0}
     }
 }
 
@@ -141,5 +151,31 @@ impl LoxString{
             hash = hash.wrapping_mul(16777619);
         }
         return hash;
+    }
+}
+
+#[derive(Clone)]
+pub struct ObjUpvalue{
+    pub location: Box<Value>, // location of Upvalue on the stack
+    pub closed: Value // this gets utilized when you close a value on the stack
+}
+
+impl Obj for ObjUpvalue{
+    fn get_type(&self) -> ObjType {
+        return ObjType::OBJ_UPVALUE
+    }
+    fn any(&self) -> &dyn Any {
+        // utilize with downcast ref in conjunction with get_type
+        // https://stackoverflow.com/questions/52247927/convert-between-a-reference-to-a-trait-and-a-struct-that-implements-that-trait-i
+        self
+    }
+    fn print_obj(&self){
+        print!("upvalue")
+    }
+}
+
+impl ObjUpvalue{
+    pub fn new(new_val: Value) -> Self{
+        ObjUpvalue{location: Box::new(new_val), closed: Value::VAL_NIL}
     }
 }

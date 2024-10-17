@@ -2,7 +2,7 @@
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::compiler_stack::CompilerStack;
-use crate::object::{LoxClosure,LoxFunction, LoxString};
+use crate::object::{LoxFunction, LoxString};
 use crate::scanner::{Token, TokenType, Scanner};
 use crate::chunk::{Chunk, OpCode};
 use crate::value::Value;
@@ -24,6 +24,7 @@ pub struct Compiler {
     pub function: Option<LoxFunction>, // what function the compiler is currently trying to check
     ftype: FunctionType, // tells you if the current function is main
     locals: Vec<Locals>, // a stack of local variables that are accessible in the current scope
+    upvalues: Vec<Upvalue>, // array of upvalues that the function needs access to
     localCount: u64, // a count of the number of variables accessible in the current scope
     scopeDepth: u64 // the current scope
 }
@@ -37,6 +38,7 @@ impl Compiler {
                     function: Some(LoxFunction::new(0, fname)),
                     ftype: new_ftype,
                     locals: Vec::new(),
+                    upvalues: Vec::with_capacity(255),
                     localCount: 0,
                     scopeDepth: 0
                 }
@@ -47,6 +49,7 @@ impl Compiler {
                     function: Some(LoxFunction::new(0, None)),
                     ftype: new_ftype,
                     locals: Vec::new(),
+                    upvalues: Vec::with_capacity(255),
                     localCount: 0,
                     scopeDepth: 0
                 }
@@ -69,6 +72,17 @@ impl Compiler {
         // Use option as a sentinel value
         self.locals.get_mut((self.localCount) as usize -1).unwrap().depth = 
             Some(self.scopeDepth);
+    }
+}
+
+pub struct Upvalue {
+    pub index: u8,
+    pub isLocal: bool
+}
+
+impl Upvalue{
+    pub fn new(new_index: u8, locality: bool) -> Self {
+        return Upvalue { index: new_index, isLocal: locality }
     }
 }
 
@@ -606,17 +620,27 @@ impl Parser{
     fn namedVariable(&mut  self, name: Token, scanner: &mut Scanner, canAssign: bool){
         let getOp: OpCode;
         let setOp: OpCode;
+        let top_compiler_index = self.compilerStack.len()-1;
         // decide if variable is local or global, and choose the appropriate opcodes
-        let arg  = match self.resolveLocal(name.clone()){
+        let arg  = match self.resolveLocal(top_compiler_index, name.clone()){
             Some(index) => {
                 getOp = OpCode::OP_GET_LOCAL;
                 setOp = OpCode::OP_SET_LOCAL;
                 index
             },
             None => {
-                getOp = OpCode::OP_GET_GLOBAL;
-                setOp = OpCode::OP_SET_GLOBAL;
-                self.identifierConstant(name)
+                match self.resolveUpvalue(Some(top_compiler_index), name.clone()){
+                    Some(i) => {
+                        getOp  = OpCode::OP_GET_UPVALUE; 
+                        setOp  = OpCode::OP_SET_UPVALUE; 
+                        i
+                    },
+                    None => {
+                        getOp = OpCode::OP_GET_GLOBAL;
+                        setOp = OpCode::OP_SET_GLOBAL;
+                        self.identifierConstant(name)
+                    }
+                }    
             }
         };
 
@@ -627,15 +651,15 @@ impl Parser{
         self.emitTwoBytes(getOp as u8, arg);
     }
 
-    fn resolveLocal(&mut self, name: Token) -> Option<u8>{
+    fn resolveLocal(&mut self,compiler_stack_index: usize, name: Token) -> Option<u8>{
         // walk up the compiler stack until you hit the top or you find a variable with the
         // semantically matching name
-        let mut index: isize =  (self.compilerStack.peek_mut().unwrap().localCount as isize) -1;
+        let mut index: isize =  (self.compilerStack.get_mut(compiler_stack_index).unwrap().localCount as isize) -1;
         loop {
             if index < 0 {
                 break;
             }
-            let local = self.compilerStack.peek_mut().unwrap().locals.get(index as usize).unwrap();
+            let local = self.compilerStack.get_mut(compiler_stack_index).unwrap().locals.get(index as usize).unwrap();
             if local.name.EqualSemantically(name.clone()) {
                 if local.depth.is_none() {
                     // prevent self initialization
@@ -646,6 +670,78 @@ impl Parser{
             index -= 1;
         }
         return None;
+    }
+
+    fn resolveUpvalue(&mut self, potential_index: Option<usize >, name: Token) -> Option<u8> {
+        match potential_index{
+            Some(index) => {
+                println!("Compiler Index {}. Depth {}", index, self.compilerStack.len());
+                match self.compilerStack.get_mut(index) {
+                    Some(_comp) => {
+                        match self.resolveLocal(index, name.clone()){
+                            Some(local) => {
+                            return Some(self.addUpvalue(index, local, true));
+                        },
+                    None => { () }
+                }
+                let upvalue = match index{
+                    0 => self.resolveUpvalue(None, name),
+                    _ => self.resolveUpvalue(Some(index-1), name)
+                };
+                match upvalue{
+                    Some(val) =>{
+                        return Some(self.addUpvalue(index, val, true));
+                    },
+                    None =>{
+                        ()
+                    }
+                }
+            }
+            None => {
+                return None
+            }
+        }
+        return None;
+ 
+            },
+            None => {
+                return None;
+            }
+        }
+   }
+
+    fn addUpvalue(&mut self, compiler_index: usize,  index: u8, isLocal: bool ) -> u8{
+        match self.compilerStack.get_mut(compiler_index) {
+            Some(comp) => {
+                let upvalueCount = match &comp.function{
+                    Some(func) => {func.upvalueCount},
+                    None => panic!("AAAAAAAAA")
+                };
+
+                // Make sure that we haven't already assigned this upvalue
+                for i in 0..upvalueCount{
+                    let upvalue = &comp.upvalues[i];
+                    if(upvalue.index == index) && (upvalue.isLocal == isLocal){
+                        return i as u8;
+                    }
+                }
+
+                // don't exceed maximum allowed upvalues
+                if (upvalueCount == 255){
+                    self.errorAt("Too many closure variables in function.".to_string(), ErrorTokenLoc::PREVIOUS);
+                    return 0;
+                }
+
+                comp.upvalues[upvalueCount as usize].isLocal = isLocal;
+                comp.upvalues[upvalueCount as usize].index = index;
+                let output = match &mut comp.function{
+                    Some(func) =>{ func.upvalueCount += 1; func.upvalueCount},
+                    None => panic!("AAAAAA")
+                };
+                return output as u8
+             },
+            None => panic!("AAAAAAA")
+        }
     }
     
 // the function that handles precedence and allows recursion to occur
@@ -940,9 +1036,40 @@ impl Parser{
 
         // Return from the function an store value on stack
         let comp = self.endParser();
+
+        // need to grab upvalue indices now to make compiler happy
+        let mut isLocal: Vec<bool> = Vec::new();
+        let mut UpvalueIndex: Vec<u8> = Vec::new();
+        match &comp{
+            Some(c) => {
+                match &c.function{
+                    Some(func) => {
+                        for i in 0..func.upvalueCount {
+                            match c.upvalues.get(i){
+                                Some(up_val) => {
+                                    isLocal.push(up_val.isLocal);
+                                    UpvalueIndex.push(up_val.index);
+                                },
+                                None => {}
+                            }
+                        }
+                    },
+                    None => panic!("AAAA")
+                }
+            },
+            None => panic!("AAAA")
+        }
+
+        // save closure to vm
         let new_val = Value::VAL_OBJ(Rc::new(RefCell::new(comp.unwrap().function.unwrap())));
         let b = self.makeConstant(new_val);
         self.emitTwoBytes(OpCode::OP_CLOSURE as u8, b);
+
+        // add indices of upvalues for closure
+        for i in 0..isLocal.len(){
+            if (isLocal[i]){ self.emitByte(1)} else{self.emitByte(0);}
+            self.emitByte(UpvalueIndex[i]);
+        }
     }
 
     fn endParser(&mut self) -> Option<Compiler>{

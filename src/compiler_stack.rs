@@ -4,14 +4,13 @@ use crate::compiler::{Compiler, FunctionType};
 pub struct CompilerStack{
     array: Vec<Compiler>
 }
-
 impl CompilerStack{
     pub fn new() -> Self{
         let mut a: Vec<Compiler> = Vec::new();
         a.push(Compiler::new(FunctionType::TYPE_SCRIPT, None));
         CompilerStack { array: a }
     }
-
+    
     pub fn push(&mut self, val: Compiler){
         self.array.push(val);
    }
@@ -27,7 +26,14 @@ impl CompilerStack{
 
     pub fn peek_mut(&mut self) -> Option<&mut Compiler>{
         let cur_size = self.array.len()-1;
-        self.array.get_mut( cur_size)
+        self.get_mut( cur_size)
    }
 
+   pub fn len(&mut self) -> usize {
+        return self.array.len();
+    }
+
+   pub fn get_mut(&mut self, index: usize) -> Option<&mut Compiler>{
+        self.array.get_mut(index)
+   }
 }

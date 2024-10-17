@@ -2,7 +2,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::object::{LoxClosure, LoxFunction, NativeFn, Obj, ObjNative};
+use crate::object::{LoxClosure, LoxFunction, NativeFn, Obj, ObjNative, ObjUpvalue};
+use crate::UpvaluesLinkedList::OpenUpvaluesLL;
 use crate::{chunk::OpCode, object::LoxString, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use crate:: stack::LoxStack;
 use crate::value::*;
@@ -37,7 +38,8 @@ pub struct VM{
     frameCount: usize, // Top stack pointer to frames
     stk: LoxStack, // value stack 
     globals: LoxTable,  // global vars
-    parser: Parser // Bundled here b/c Rust is paranoid
+    parser: Parser, // Bundled here b/c Rust is paranoid
+    openUpvalues: OpenUpvaluesLL // linked list of upvalues allocated on the heap
 }
 
 pub fn clockNative(_argC: usize, _value_index: usize) -> Value{
@@ -52,7 +54,8 @@ impl VM {
         frameCount: 0,
         globals: LoxTable::new(),
         stk: LoxStack::new(),
-        parser: Parser::new()
+        parser: Parser::new(),
+        openUpvalues: OpenUpvaluesLL::new()
         };
 
         // native functions get defined here
@@ -68,7 +71,7 @@ impl VM {
         match self.parser.compile(&mut scanner){
             None => return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string()),
             Some(comp) => {
-                self.stk.push(Value::VAL_OBJ(Rc::new(RefCell::new(LoxClosure::new(Some(comp.function.unwrap())))).clone()));
+                self.stk.push(Value::VAL_OBJ(Rc::new(RefCell::new(LoxClosure::new(comp.function.unwrap()))).clone()));
                 // this callValue simple executes the top level function
                 match self.callValue(self.stk.peek(0).unwrap(), 0){
                         Err(str) => { return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str)))}
@@ -91,7 +94,7 @@ impl VM {
                         let frame = self.getCurrentFunction().unwrap();
                         match &frame.closure {
                             Some(cls) => {
-                                match &cls.borrow().function{
+                                match &cls.borrow_mut().function{
                                     Some(fun) => {
                                         let _ = fun.chunk.disassemble_instruction(frame.ip);
                                     }
@@ -155,13 +158,81 @@ impl VM {
                         Value::VAL_OBJ(pointer_stuff) => {
                             let ptr = pointer_stuff.borrow();
                             let func = ptr.any().downcast_ref::<LoxFunction>().unwrap().clone();
-                            self.stk.push(Value::VAL_OBJ(Rc::new( RefCell::new(LoxClosure::new(Some(func)))  )));
+                            let mut a   = LoxClosure::new(func);
+                            for i in 0..a.upvalueCount{
+                                let isLocal = self.read_byte();
+                                let index = self.read_byte();
+                                if  isLocal.unwrap() == 1 {
+                                    let new_index = self.getCurrentFunction().unwrap().starting_index + index.unwrap() as usize;
+                                    let v = self.stk.get(new_index);
+                                    a.upvalues[i] = Some(self.captureUpvalue(v.unwrap()));
+                                } else{
+                                    match &self.getCurrentFunction().unwrap().closure{
+                                        Some(c) => {
+                                            a.upvalues[i] = c.borrow_mut().upvalues[i].clone(); 
+                                        },
+                                        None => {panic!("AAAA");}
+                                    }
+                                }
+                            }
+                            self.stk.push(Value::VAL_OBJ(Rc::new( RefCell::new(a)  )));
                          }
                         _ => {
                             panic!("AAAAAAAAAAAAAAAAA");
                         }
                    }
-               }
+               },
+               OpCode::OP_GET_UPVALUE => {
+                    let slot = self.read_byte().unwrap();
+                    match self.getCurrentFunction() {
+                        Some(cf) => {
+                            match &cf.closure {
+                                Some(c) => {
+                                    let new_val  = match c.borrow().upvalues.get(slot as usize){
+                                        Some(loc) => {
+                                            match loc{
+                                                Some(x) => {
+                                                    *x.location.clone()
+                                                },
+                                                None => panic!("AAAA")
+                                            }
+                                        },
+                                        None => panic!("AAAA")
+                                    };
+                                    self.stk.push(new_val);
+                                },
+                                None => panic!("AAAA")
+                            }
+                        },
+                        None => panic!("AAAA")
+                   }
+               },
+               OpCode::OP_SET_UPVALUE => {
+                    let new_loc = self.stk.peek(0).unwrap();
+                    let slot = self.read_byte().unwrap();
+                    match self.getCurrentFunction() {
+                        Some(cf) => {
+                            match & cf.closure {
+                                Some(c) => {
+                                    let mut temp = c.borrow_mut();
+                                    match temp.upvalues.get_mut(slot as usize){
+                                        Some(loc) => {
+                                            match loc{
+                                                Some(x) => {
+                                                    x.location = Box::new(new_loc);
+                                                },
+                                                None => panic!("AAAA")
+                                            }
+                                        },
+                                        None => panic!("AAAA")
+                                    }
+                                },
+                                None => panic!("AAAA")
+                            }
+                        },
+                        None => panic!("AAAA")
+                   }
+               },
                 OpCode::OP_RETURN => { // return from function
                     let result = self.stk.pop();
                     // clean up the stack to until the current function call gets erased
@@ -455,6 +526,11 @@ impl VM {
             _ => {()}
         }
         return Err("Can only call functions and classes.".to_string());
+    }
+
+    fn captureUpvalue(&mut self, local: Value) -> Box<ObjUpvalue>{
+        let createdUpvalue = Box::new(ObjUpvalue::new(local));
+        return createdUpvalue;
     }
 
     fn Call(&mut self, closure_wrapper: Rc<RefCell<dyn Obj>> , argCount: u8) -> Result<(),String>{
