@@ -31,6 +31,10 @@ pub struct Compiler {
 
 impl Compiler {
     pub fn new(new_ftype: FunctionType, fname: Option<LoxString>) -> Self{
+        let mut empty_upvalue_array : Vec::<Upvalue> = vec![];
+        for i in 0..255{
+            empty_upvalue_array.push(Upvalue::new(0, false));
+        }
         match new_ftype{
             // Most functions calls go here. You give Names to your functions
             FunctionType::TYPE_FUNCTION => {
@@ -38,7 +42,7 @@ impl Compiler {
                     function: Some(LoxFunction::new(0, fname)),
                     ftype: new_ftype,
                     locals: Vec::new(),
-                    upvalues: Vec::with_capacity(255),
+                    upvalues: empty_upvalue_array,
                     localCount: 0,
                     scopeDepth: 0
                 }
@@ -49,7 +53,7 @@ impl Compiler {
                     function: Some(LoxFunction::new(0, None)),
                     ftype: new_ftype,
                     locals: Vec::new(),
-                    upvalues: Vec::with_capacity(255),
+                    upvalues: empty_upvalue_array,
                     localCount: 0,
                     scopeDepth: 0
                 }
@@ -675,7 +679,6 @@ impl Parser{
     fn resolveUpvalue(&mut self, potential_index: Option<usize >, name: Token) -> Option<u8> {
         match potential_index{
             Some(index) => {
-                println!("Compiler Index {}. Depth {}", index, self.compilerStack.len());
                 match self.compilerStack.get_mut(index) {
                     Some(_comp) => {
                         match self.resolveLocal(index, name.clone()){

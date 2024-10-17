@@ -188,7 +188,7 @@ impl VM {
                         Some(cf) => {
                             match &cf.closure {
                                 Some(c) => {
-                                    let new_val  = match c.borrow().upvalues.get(slot as usize){
+                                    let new_val  = match c.borrow().upvalues.get(slot as usize-1){
                                         Some(loc) => {
                                             match loc{
                                                 Some(x) => {
@@ -219,7 +219,7 @@ impl VM {
                                         Some(loc) => {
                                             match loc{
                                                 Some(x) => {
-                                                    x.location = Box::new(new_loc);
+                                                    *x.location = new_loc;
                                                 },
                                                 None => panic!("AAAA")
                                             }
