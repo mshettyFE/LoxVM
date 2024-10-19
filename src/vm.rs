@@ -408,7 +408,7 @@ impl VM {
         if(self.frames.len()+1 == 255){
             return Err("Stack overflow.".to_string());
         }
-            if argCount as usize != closure.function.clone().arity {
+            if argCount as usize != closure.function.arity {
                     return Err(format!("Expected {} arguments but got {}.", closure.function.arity, argCount));
         }
         // Adds a new frame to the call stack
