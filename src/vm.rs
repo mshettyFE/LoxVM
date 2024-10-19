@@ -3,7 +3,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::object::{LoxClosure, LoxFunction, NativeFn, Obj, ObjNative, ObjUpvalue};
-use crate::UpvaluesLinkedList::OpenUpvaluesLL;
 use crate::{chunk::OpCode, object::LoxString, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use crate:: stack::LoxStack;
 use crate::value::*;
@@ -39,7 +38,7 @@ pub struct VM{
     stk: LoxStack, // value stack 
     globals: LoxTable,  // global vars
     parser: Parser, // Bundled here b/c Rust is paranoid
-    openUpvalues: OpenUpvaluesLL // linked list of upvalues allocated on the heap
+    upvalues: Vec<Rc<RefCell<ObjUpvalue>>> // linked list of upvalues allocated on the heap
 }
 
 pub fn clockNative(_argC: usize, _value_index: usize) -> Value{
@@ -55,7 +54,7 @@ impl VM {
         globals: LoxTable::new(),
         stk: LoxStack::new(),
         parser: Parser::new(),
-        openUpvalues: OpenUpvaluesLL::new()
+        upvalues: Vec::new()
         };
 
         // native functions get defined here
@@ -164,8 +163,7 @@ impl VM {
                                 let index = self.read_byte();
                                 if  isLocal.unwrap() == 1 {
                                     let new_index = self.getCurrentFunction().unwrap().starting_index + index.unwrap() as usize;
-                                    let v = self.stk.get(new_index);
-                                    a.upvalues[i] = Some(self.captureUpvalue(v.unwrap()));
+                                    a.upvalues[i] = Some(self.captureUpvalue(new_index));
                                 } else{
                                     match &self.getCurrentFunction().unwrap().closure{
                                         Some(c) => {
@@ -192,14 +190,17 @@ impl VM {
                                         Some(loc) => {
                                             match loc{
                                                 Some(x) => {
-                                                    *x.location.clone()
+                                                    *x.clone()
                                                 },
                                                 None => panic!("AAAA")
                                             }
                                         },
                                         None => panic!("AAAA")
                                     };
-                                    self.stk.push(new_val);
+                                    match new_val{
+                                        ObjUpvalue::Open(idx) => {self.stk.push(self.stk.get(idx).unwrap());}
+                                        ObjUpvalue::Closed(_) => !todo!()
+                                    }
                                 },
                                 None => panic!("AAAA")
                             }
@@ -208,8 +209,9 @@ impl VM {
                    }
                },
                OpCode::OP_SET_UPVALUE => {
-                    let new_loc = self.stk.peek(0).unwrap();
+                    let new_val = self.stk.peek(0).unwrap();
                     let slot = self.read_byte().unwrap();
+                    let mut index: Option<usize> = None;
                     match self.getCurrentFunction() {
                         Some(cf) => {
                             match & cf.closure {
@@ -219,7 +221,11 @@ impl VM {
                                         Some(loc) => {
                                             match loc{
                                                 Some(x) => {
-                                                    *x.location = new_loc;
+                                                    match &mut **x{
+                                                        ObjUpvalue::Open(idx) => index = Some(*idx),
+//                                                        ObjUpvalue::Closed(val) => *val = new_val
+                                                        ObjUpvalue::Closed(_) => todo!()
+                                                    }
                                                 },
                                                 None => panic!("AAAA")
                                             }
@@ -232,6 +238,10 @@ impl VM {
                         },
                         None => panic!("AAAA")
                    }
+                    match index{
+                        Some(idx) => self.stk.set(idx, new_val),
+                        None => ()
+                    }
                },
                 OpCode::OP_RETURN => { // return from function
                     let result = self.stk.pop();
@@ -528,8 +538,8 @@ impl VM {
         return Err("Can only call functions and classes.".to_string());
     }
 
-    fn captureUpvalue(&mut self, local: Value) -> Box<ObjUpvalue>{
-        let createdUpvalue = Box::new(ObjUpvalue::new(local));
+    fn captureUpvalue(&mut self, local: usize) -> Box<ObjUpvalue>{
+        let createdUpvalue = Box::new(ObjUpvalue::Open(local));
         return createdUpvalue;
     }
 

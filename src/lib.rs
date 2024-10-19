@@ -9,7 +9,6 @@ pub mod scanner;
 pub mod compiler;
 pub mod object;
 pub mod table;
-pub mod UpvaluesLinkedList;
 
 extern crate num;
 #[macro_use]

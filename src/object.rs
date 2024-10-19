@@ -155,9 +155,9 @@ impl LoxString{
 }
 
 #[derive(Clone)]
-pub struct ObjUpvalue{
-    pub location: Box<Value>, // location of Upvalue on the stack
-    pub closed: Value // this gets utilized when you close a value on the stack
+pub enum ObjUpvalue{
+    Open(usize),
+    Closed(Value)
 }
 
 impl Obj for ObjUpvalue{
@@ -175,7 +175,16 @@ impl Obj for ObjUpvalue{
 }
 
 impl ObjUpvalue{
-    pub fn new(new_val: Value) -> Self{
-        ObjUpvalue{location: Box::new(new_val), closed: Value::VAL_NIL}
+    pub fn is_open(&self) -> bool{
+        match self {
+            ObjUpvalue::Open(_) => true,
+            ObjUpvalue::Closed(_) => false,
+        }
+    }
+    pub fn is_open_with_index(&self, index: usize) -> bool{
+        match self {
+            ObjUpvalue::Open(idx) => *idx==index,
+            ObjUpvalue::Closed(_) => false,
+        }
     }
 }
