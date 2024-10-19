@@ -1,11 +1,7 @@
 #![allow(non_camel_case_types)]
-use std::rc::Rc;
-use std::cell::RefCell;
-use crate::compiler_stack::CompilerStack;
-use crate::object::{LoxFunction, LoxString};
 use crate::scanner::{Token, TokenType, Scanner};
 use crate::chunk::{Chunk, OpCode};
-use crate::value::Value;
+use crate::value::*;
 use crate::DEBUG_PRINT_CODE;
 use std::mem;
 
@@ -21,39 +17,32 @@ pub enum FunctionType {
 
 
 pub struct Compiler {
-    pub function: Option<LoxFunction>, // what function the compiler is currently trying to check
+    pub function: LoxFunction, // what function the compiler is currently trying to check
     ftype: FunctionType, // tells you if the current function is main
     locals: Vec<Locals>, // a stack of local variables that are accessible in the current scope
-    upvalues: Vec<Upvalue>, // array of upvalues that the function needs access to
     localCount: u64, // a count of the number of variables accessible in the current scope
     scopeDepth: u64 // the current scope
 }
 
 impl Compiler {
-    pub fn new(new_ftype: FunctionType, fname: Option<LoxString>) -> Self{
-        let mut empty_upvalue_array : Vec::<Upvalue> = vec![];
-        for i in 0..255{
-            empty_upvalue_array.push(Upvalue::new(0, false));
-        }
-        match new_ftype{
+    pub fn new(new_ftype: FunctionType, fname: LoxString) -> Self{
+       match new_ftype{
             // Most functions calls go here. You give Names to your functions
             FunctionType::TYPE_FUNCTION => {
                 Compiler{
-                    function: Some(LoxFunction::new(0, fname)),
+                    function: LoxFunction::new(0, fname),
                     ftype: new_ftype,
                     locals: Vec::new(),
-                    upvalues: empty_upvalue_array,
                     localCount: 0,
                     scopeDepth: 0
                 }
             },
-            // the "main" function goes here. It has no name
+            // the "main" function goes here
             FunctionType::TYPE_SCRIPT => {
                 Compiler{
-                    function: Some(LoxFunction::new(0, None)),
+                    function: LoxFunction::new(0, LoxString::new("script".to_string())),
                     ftype: new_ftype,
                     locals: Vec::new(),
-                    upvalues: empty_upvalue_array,
                     localCount: 0,
                     scopeDepth: 0
                 }
@@ -79,17 +68,6 @@ impl Compiler {
     }
 }
 
-pub struct Upvalue {
-    pub index: u8,
-    pub isLocal: bool
-}
-
-impl Upvalue{
-    pub fn new(new_index: u8, locality: bool) -> Self {
-        return Upvalue { index: new_index, isLocal: locality }
-    }
-}
-
 // defines a local variable
 pub struct Locals {
     pub name: Token, // name of variable
@@ -106,7 +84,7 @@ impl Locals {
 // requests tokens as needed from a scanner, then converts them too bytecode
 // It's basically as single pass compiler
 pub struct Parser{
-    compilerStack: CompilerStack, // current chunk being executed. Could represent a function, or
+    compilerStack: Vec<Compiler>, // current chunk being executed. Could represent a function, or
                                     // a group of statements
     // the tokens under consideration
     current: Token,                 
@@ -229,8 +207,11 @@ impl Parser{
  rules[TokenType::TOKEN_WHILE as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_ERROR as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_EOF as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
-    
- Parser{compilerStack: CompilerStack::new(), 
+   
+    let mut a: Vec<Compiler> = Vec::new(); 
+    a.push(Compiler::new(FunctionType::TYPE_SCRIPT, LoxString::new("script".to_string())));
+ 
+ Parser{compilerStack: a, 
         previous: Token {ttype: TokenType::TOKEN_ERROR, start: "".to_string(), line: 0 },
         current: Token { ttype: TokenType::TOKEN_ERROR, start: "".to_string(), line: 0 },
         hadError: false,
@@ -344,22 +325,22 @@ impl Parser{
         else if self.Match(scanner, TokenType::TOKEN_LEFT_BRACE){
             // Blocks are slightly more involved
             // You need to wrap the block in it's own scope
-            self.compilerStack.peek_mut().unwrap().beginScope();
+            self.compilerStack.last_mut().unwrap().beginScope();
             self.block(scanner);
-            self.compilerStack.peek_mut().unwrap().endScope();
+            self.compilerStack.last_mut().unwrap().endScope();
             loop {
                 // Once the block is done, you need to pop off all of the local variables which
                 // where generated in the block
-                if self.compilerStack.peek_mut().unwrap().localCount == 0 {
+                if self.compilerStack.last_mut().unwrap().localCount == 0 {
                     break;
                 }
-                let cur_comp = self.compilerStack.peek_mut().unwrap();
+                let cur_comp = self.compilerStack.last_mut().unwrap();
                 // you get rid of all variables whose depth is greater than that of the current
                 // scope depth
                 let var_depth = cur_comp.locals.get( (cur_comp.localCount-1) as usize ).unwrap().depth;
-                if var_depth.unwrap() > self.compilerStack.peek_mut().unwrap().scopeDepth {
+                if var_depth.unwrap() > self.compilerStack.last_mut().unwrap().scopeDepth {
                     self.emitByte(OpCode::OP_POP as u8);
-                    self.compilerStack.peek_mut().unwrap().localCount -= 1;
+                    self.compilerStack.last_mut().unwrap().localCount -= 1;
                     continue;
                 }
                 break;
@@ -406,7 +387,7 @@ impl Parser{
         // Get the name of the function
         let global = self.parseVariable("Expect function name.".to_string(), scanner);
         // You shouldn't be able to self-assign a function
-        self.compilerStack.peek_mut().unwrap().markInitialized();
+        self.compilerStack.last_mut().unwrap().markInitialized();
         self.function(FunctionType::TYPE_FUNCTION, scanner);
         self.defineVariable(global);
     }
@@ -423,7 +404,7 @@ impl Parser{
         //                   expression? ";"
         //                   expression? ")" statement 
         //  for statement has it's own scope. Done here to include looping variables in scope
-        self.compilerStack.peek_mut().unwrap().beginScope(); 
+        self.compilerStack.last_mut().unwrap().beginScope(); 
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'for'.".to_string(), scanner);
         // parsing initialization condition
         if self.Match(scanner, TokenType::TOKEN_SEMICOLON){}
@@ -478,7 +459,7 @@ impl Parser{
         }
 
         // for loops close scoping once done
-        self.compilerStack.peek_mut().unwrap().endScope();
+        self.compilerStack.last_mut().unwrap().endScope();
 
     }
 
@@ -502,7 +483,7 @@ impl Parser{
 
     fn returnStatement(&mut self, scanner: &mut Scanner){
         // make sure you can't return from top level
-        if self.compilerStack.peek_mut().unwrap().ftype
+        if self.compilerStack.last_mut().unwrap().ftype
             == FunctionType::TYPE_SCRIPT{
             self.errorAt("Can't return from top-level code;".to_string(), ErrorTokenLoc::PREVIOUS);
         }
@@ -613,7 +594,7 @@ impl Parser{
         // trim of quotes
         let unquoted = &quoted[1..len-1];
         let new_string = LoxString::new(unquoted.to_string());
-        let data =  Value::VAL_OBJ(Rc::new( RefCell::new(new_string)));
+        let data =  Value::VAL_STRING(new_string);
         self.emitConstant(data); 
     }
 
@@ -714,38 +695,8 @@ impl Parser{
    }
 
     fn addUpvalue(&mut self, compiler_index: usize,  index: u8, isLocal: bool ) -> u8{
-        match self.compilerStack.get_mut(compiler_index) {
-            Some(comp) => {
-                let upvalueCount = match &comp.function{
-                    Some(func) => {func.upvalueCount},
-                    None => panic!("AAAAAAAAA")
-                };
-
-                // Make sure that we haven't already assigned this upvalue
-                for i in 0..upvalueCount{
-                    let upvalue = &comp.upvalues[i];
-                    if(upvalue.index == index) && (upvalue.isLocal == isLocal){
-                        return i as u8;
-                    }
-                }
-
-                // don't exceed maximum allowed upvalues
-                if (upvalueCount == 255){
-                    self.errorAt("Too many closure variables in function.".to_string(), ErrorTokenLoc::PREVIOUS);
-                    return 0;
-                }
-
-                comp.upvalues[upvalueCount as usize].isLocal = isLocal;
-                comp.upvalues[upvalueCount as usize].index = index;
-                let output = match &mut comp.function{
-                    Some(func) =>{ func.upvalueCount += 1; func.upvalueCount},
-                    None => panic!("AAAAAA")
-                };
-                return output as u8
-             },
-            None => panic!("AAAAAAA")
-        }
-    }
+        todo!()
+   }
     
 // the function that handles precedence and allows recursion to occur
     fn parsePrecedence(&mut self, init_precedence: Precedence, scanner: &mut Scanner,){
@@ -818,14 +769,14 @@ impl Parser{
     fn parseVariable(&mut self, err_msg: String, scanner: &mut Scanner ) -> u8{
         self.consume(TokenType::TOKEN_IDENTIFIER, err_msg, scanner); 
         self.declareVariable();
-        if self.compilerStack.peek_mut().unwrap().scopeDepth > 0 {return 0;}
+        if self.compilerStack.last_mut().unwrap().scopeDepth > 0 {return 0;}
         return self.identifierConstant(self.previous.clone())
     }
 
     fn defineVariable(&mut self, global: u8, ){
         // emit variable to vm
-        if self.compilerStack.peek_mut().unwrap().scopeDepth > 0{
-            self.compilerStack.peek_mut().unwrap().markInitialized();
+        if self.compilerStack.last_mut().unwrap().scopeDepth > 0{
+            self.compilerStack.last_mut().unwrap().markInitialized();
             return; 
         }
         self.emitTwoBytes(OpCode::OP_DEFINE_GLOBAL as u8, global);
@@ -833,11 +784,11 @@ impl Parser{
 
     fn declareVariable(&mut self, ){
         // walk up compiler stack and check if variable already exists in the current scope
-        if self.compilerStack.peek_mut().unwrap().scopeDepth  == 0 {return ;}
-        let sd = self.compilerStack.peek_mut().unwrap().scopeDepth;
-        let new_local: Locals = Locals::new(self.previous.clone(), Some(self.compilerStack.peek_mut().unwrap().scopeDepth));
-        for index in  (0..self.compilerStack.peek_mut().unwrap().localCount).rev(){
-            let local = self.compilerStack.peek_mut().unwrap().locals.get(index as usize).unwrap();
+        if self.compilerStack.last_mut().unwrap().scopeDepth  == 0 {return ;}
+        let sd = self.compilerStack.last_mut().unwrap().scopeDepth;
+        let new_local: Locals = Locals::new(self.previous.clone(), Some(self.compilerStack.last_mut().unwrap().scopeDepth));
+        for index in  (0..self.compilerStack.last_mut().unwrap().localCount).rev(){
+            let local = self.compilerStack.last_mut().unwrap().locals.get(index as usize).unwrap();
             if local.depth.unwrap() < sd{
                 break;
             }
@@ -851,14 +802,13 @@ impl Parser{
     fn addLocal(&mut self, mut new_local: Locals){
         // add local variable to current compiler
         new_local.depth = None;
-        self.compilerStack.peek_mut().unwrap().localCount += 1;
-        self.compilerStack.peek_mut().unwrap().locals.push(new_local);
+        self.compilerStack.last_mut().unwrap().localCount += 1;
+        self.compilerStack.last_mut().unwrap().locals.push(new_local);
     }
 
     fn identifierConstant(&mut self, name: Token) -> u8{
         // add variable name to chunk
-        let str = LoxString::new(name.start);
-        let val = Value::VAL_OBJ(Rc::new( RefCell::new(str)));
+        let val = Value::VAL_STRING(LoxString::new(name.start));
         self.makeConstant(val)
     }
 
@@ -935,12 +885,7 @@ impl Parser{
     
     pub fn currentChunk(&mut self) -> & mut Chunk{
         // utility function to get current chunk
-        match &mut self.compilerStack.peek_mut().unwrap().function{
-            Some(fnc) => {
-                return &mut fnc.chunk
-            },
-            None => panic!("Couldn't load function")
-        }
+        return &mut self.compilerStack.last_mut().unwrap().function.chunk;
     }
 
     fn errorAt(&mut self, msg: String, which_token: ErrorTokenLoc){
@@ -1012,15 +957,15 @@ impl Parser{
         // IDENTIFIER was parsed in funDecl, so that's fine
 
         // Entering a new function means you need a new compiler
-        self.compilerStack.push(Compiler::new(ftype, Some(LoxString::new(self.previous.start.clone()))));
-        self.compilerStack.peek_mut().unwrap().beginScope();
+        self.compilerStack.push(Compiler::new(ftype, LoxString::new(self.previous.start.clone())));
+        self.compilerStack.last_mut().unwrap().beginScope();
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after function name.".to_string(), scanner);
         // You parse arguments of the function, checking to make sure that you don't have a
         // stupidly large number of args and that each argument is a valid variable
         if ! self.check(TokenType::TOKEN_RIGHT_PAREN) {
             loop {
-                self.compilerStack.peek_mut().unwrap().function.as_mut().unwrap().arity += 1;
-                if self.compilerStack.peek_mut().unwrap().function.as_mut().unwrap().arity >= 255 {
+                self.compilerStack.last_mut().unwrap().function.arity += 1;
+                if self.compilerStack.last_mut().unwrap().function.arity >= 255 {
                     self.errorAt("Can't have more than 255 parameters".to_string(), ErrorTokenLoc::CURRENT);
                 }
                 let paramConstant = self.parseVariable("Expect parameter name".to_string(), scanner);
@@ -1040,55 +985,21 @@ impl Parser{
         // Return from the function an store value on stack
         let comp = self.endParser();
 
-        // need to grab upvalue indices now to make compiler happy
-        let mut isLocal: Vec<bool> = Vec::new();
-        let mut UpvalueIndex: Vec<u8> = Vec::new();
-        match &comp{
-            Some(c) => {
-                match &c.function{
-                    Some(func) => {
-                        for i in 0..func.upvalueCount {
-                            match c.upvalues.get(i){
-                                Some(up_val) => {
-                                    isLocal.push(up_val.isLocal);
-                                    UpvalueIndex.push(up_val.index);
-                                },
-                                None => {}
-                            }
-                        }
-                    },
-                    None => panic!("AAAA")
-                }
-            },
-            None => panic!("AAAA")
-        }
-
         // save closure to vm
-        let new_val = Value::VAL_OBJ(Rc::new(RefCell::new(comp.unwrap().function.unwrap())));
+        let new_val = Value::VAL_FUNCTION(comp.unwrap().function);
         let b = self.makeConstant(new_val);
         self.emitTwoBytes(OpCode::OP_CLOSURE as u8, b);
 
-        // add indices of upvalues for closure
-        for i in 0..isLocal.len(){
-            if (isLocal[i]){ self.emitByte(1)} else{self.emitByte(0);}
-            self.emitByte(UpvalueIndex[i]);
-        }
     }
 
     fn endParser(&mut self) -> Option<Compiler>{
         // tops off current chunk with return, disassembles if prompted, then pops the compiler
         // stack to deal with the next function
         self.emitReturn();
-        let function = &self.compilerStack.peek_mut().unwrap().function;
+        let function = &self.compilerStack.last_mut().unwrap().function;
         if *DEBUG_PRINT_CODE.get().unwrap(){
             if !self.hadError{
-                let msg = match &function {
-                    Some(fnc) => match &fnc.name {
-                        Some(v) => v.val.clone(),
-                        None => "<script>".to_string(),
-                    }
-                    None => panic!("Couldn't load function")
-                };
+                let msg = function.name.name.clone();
                 let _ = self.currentChunk().disassemble(msg);
             }
         }

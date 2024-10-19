@@ -4,10 +4,8 @@ pub mod chunk;
 pub mod value;
 pub mod vm;
 pub mod stack;
-pub mod compiler_stack;
 pub mod scanner;
 pub mod compiler;
-pub mod object;
 pub mod table;
 
 extern crate num;

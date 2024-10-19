@@ -1,9 +1,6 @@
 #![allow(non_camel_case_types)]
-use std::cell::RefCell;
-use std::rc::Rc;
 
-use crate::object::{LoxClosure, LoxFunction, NativeFn, Obj, ObjNative, ObjUpvalue};
-use crate::{chunk::OpCode, object::LoxString, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
+use crate::{chunk::OpCode, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use crate:: stack::LoxStack;
 use crate::value::*;
 use crate::compiler::*;
@@ -19,7 +16,7 @@ pub enum InterpretResult {
 
 // the current function being executed, as well as where in the VM the function starts at
 pub struct CallFrame{
-    pub closure: Option<Rc<RefCell<LoxClosure>>>,
+    pub closure: Option<LoxClosure>,
     pub ip: usize, // ip relative to the current function (so 0 is the start of the current
                          // function, which has no relationship to other functions due to how the
                          // call stack is structured)
@@ -27,18 +24,16 @@ pub struct CallFrame{
 }
 
 impl CallFrame {
-    pub fn new(cls: Rc<RefCell<LoxClosure>>, new_starting_index: usize) -> Self{
-        CallFrame{closure: Some(cls), ip: 0, starting_index: new_starting_index} 
+    pub fn new(cls: Option<LoxClosure>, new_starting_index: usize) -> Self{
+        CallFrame{closure: cls, ip: 0, starting_index: new_starting_index} 
     }
 }
 
 pub struct VM{
     frames: Vec<CallFrame>, // stores the function stack
-    frameCount: usize, // Top stack pointer to frames
     stk: LoxStack, // value stack 
     globals: LoxTable,  // global vars
     parser: Parser, // Bundled here b/c Rust is paranoid
-    upvalues: Vec<Rc<RefCell<ObjUpvalue>>> // linked list of upvalues allocated on the heap
 }
 
 pub fn clockNative(_argC: usize, _value_index: usize) -> Value{
@@ -50,11 +45,9 @@ impl VM {
     pub fn new() -> Self{
     let mut x = VM{
         frames: Vec::new(),
-        frameCount: 0,
         globals: LoxTable::new(),
         stk: LoxStack::new(),
         parser: Parser::new(),
-        upvalues: Vec::new()
         };
 
         // native functions get defined here
@@ -70,7 +63,7 @@ impl VM {
         match self.parser.compile(&mut scanner){
             None => return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string()),
             Some(comp) => {
-                self.stk.push(Value::VAL_OBJ(Rc::new(RefCell::new(LoxClosure::new(comp.function.unwrap()))).clone()));
+                self.stk.push(Value::VAL_CLOSURE(LoxClosure { function: comp.function }));
                 // this callValue simple executes the top level function
                 match self.callValue(self.stk.peek(0).unwrap(), 0){
                         Err(str) => { return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str)))}
@@ -90,18 +83,11 @@ impl VM {
                  Some(val) => {
                      if *val {
                         self.stk.print();
-                        let frame = self.getCurrentFunction().unwrap();
+                        let frame = self.getCurrentFrame().unwrap();
                         match &frame.closure {
                             Some(cls) => {
-                                match &cls.borrow_mut().function{
-                                    Some(fun) => {
-                                        let _ = fun.chunk.disassemble_instruction(frame.ip);
-                                    }
-                                    None => {
-                                        panic!("AAAAAAAAA");
-                                    } 
-                                }
-                            },
+                                cls.function.chunk.disassemble_instruction(frame.ip);
+                           },
                             None => panic!("AAAAAAAA")
                        }
                     }
@@ -132,17 +118,17 @@ impl VM {
                 OpCode::OP_LOOP => {
                     let offset = self.read_short(); // How many addresses back do we need to jump
                                                     // backwards
-                    self.getCurrentFunction().unwrap().ip -= offset as usize;
+                    self.getCurrentFrame().unwrap().ip -= offset as usize;
                 }
                 OpCode::OP_JUMP =>{ // unconditional jump
                     let offset = self.read_short(); // How many addresses do we need to jump ahead
-                    self.getCurrentFunction().unwrap().ip += offset as usize;
+                    self.getCurrentFrame().unwrap().ip += offset as usize;
                 }
                 OpCode::OP_JUMP_IF_FALSE => {
                     let offset = self.read_short();
                     if isFalsey(self.stk.peek(0).unwrap()) { // If top of stack if false, jump
                                                              // ahead
-                        self.getCurrentFunction().unwrap().ip += offset as usize;
+                        self.getCurrentFrame().unwrap().ip += offset as usize;
                     }
                 },
                 OpCode::OP_CALL => { // execute the function
@@ -153,108 +139,27 @@ impl VM {
                     }
                 },
                 OpCode::OP_CLOSURE => {
-                    match self.read_constant(){
-                        Value::VAL_OBJ(pointer_stuff) => {
-                            let ptr = pointer_stuff.borrow();
-                            let func = ptr.any().downcast_ref::<LoxFunction>().unwrap().clone();
-                            let mut a   = LoxClosure::new(func);
-                            for i in 0..a.upvalueCount{
-                                let isLocal = self.read_byte();
-                                let index = self.read_byte();
-                                if  isLocal.unwrap() == 1 {
-                                    let new_index = self.getCurrentFunction().unwrap().starting_index + index.unwrap() as usize;
-                                    a.upvalues[i] = Some(self.captureUpvalue(new_index));
-                                } else{
-                                    match &self.getCurrentFunction().unwrap().closure{
-                                        Some(c) => {
-                                            a.upvalues[i] = c.borrow_mut().upvalues[i].clone(); 
-                                        },
-                                        None => {panic!("AAAA");}
-                                    }
-                                }
-                            }
-                            self.stk.push(Value::VAL_OBJ(Rc::new( RefCell::new(a)  )));
-                         }
-                        _ => {
-                            panic!("AAAAAAAAAAAAAAAAA");
-                        }
-                   }
-               },
+                    if let Value::VAL_FUNCTION(func) = self.read_constant(){
+                        self.stk.push(Value::VAL_CLOSURE(LoxClosure{function: func}))
+                    } else {panic!()}
+              },
                OpCode::OP_GET_UPVALUE => {
-                    let slot = self.read_byte().unwrap();
-                    match self.getCurrentFunction() {
-                        Some(cf) => {
-                            match &cf.closure {
-                                Some(c) => {
-                                    let new_val  = match c.borrow().upvalues.get(slot as usize-1){
-                                        Some(loc) => {
-                                            match loc{
-                                                Some(x) => {
-                                                    *x.clone()
-                                                },
-                                                None => panic!("AAAA")
-                                            }
-                                        },
-                                        None => panic!("AAAA")
-                                    };
-                                    match new_val{
-                                        ObjUpvalue::Open(idx) => {self.stk.push(self.stk.get(idx).unwrap());}
-                                        ObjUpvalue::Closed(_) => !todo!()
-                                    }
-                                },
-                                None => panic!("AAAA")
-                            }
-                        },
-                        None => panic!("AAAA")
-                   }
-               },
+                   todo!()
+              },
                OpCode::OP_SET_UPVALUE => {
-                    let new_val = self.stk.peek(0).unwrap();
-                    let slot = self.read_byte().unwrap();
-                    let mut index: Option<usize> = None;
-                    match self.getCurrentFunction() {
-                        Some(cf) => {
-                            match & cf.closure {
-                                Some(c) => {
-                                    let mut temp = c.borrow_mut();
-                                    match temp.upvalues.get_mut(slot as usize){
-                                        Some(loc) => {
-                                            match loc{
-                                                Some(x) => {
-                                                    match &mut **x{
-                                                        ObjUpvalue::Open(idx) => index = Some(*idx),
-//                                                        ObjUpvalue::Closed(val) => *val = new_val
-                                                        ObjUpvalue::Closed(_) => todo!()
-                                                    }
-                                                },
-                                                None => panic!("AAAA")
-                                            }
-                                        },
-                                        None => panic!("AAAA")
-                                    }
-                                },
-                                None => panic!("AAAA")
-                            }
-                        },
-                        None => panic!("AAAA")
-                   }
-                    match index{
-                        Some(idx) => self.stk.set(idx, new_val),
-                        None => ()
-                    }
-               },
+                   todo!()
+              },
                 OpCode::OP_RETURN => { // return from function
                     let result = self.stk.pop();
                     // clean up the stack to until the current function call gets erased
-                    let current_pointer = self.getCurrentFunction().unwrap().starting_index;
+                    let current_pointer = self.getCurrentFrame().unwrap().starting_index;
                     while self.stk.size() > current_pointer{
                         self.stk.pop();
                     }
                     // Pop from the call stack
-                    self.frameCount -= 1;
                     self.frames.pop();
                     // If at the base, then you need to exit from the program
-                    if (self.frameCount == 0){
+                    if (self.frames.len() == 0){
                         self.stk.pop(); // remove the stray NIL value from the stack
                         return InterpretResult::INTERPRET_OK
                     }
@@ -266,7 +171,7 @@ impl VM {
                  self.stk.push(constant.clone());
                },
                OpCode::OP_NIL => {
-                    self.stk.push(Value::VAL_NIL)
+                    self.stk.push(Value::VAL_NIL);
                }
                OpCode::OP_TRUE => {
                     self.stk.push(Value::VAL_BOOL(true))
@@ -282,7 +187,7 @@ impl VM {
                         Ok(val) => val,
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",err_msg))),
                     };
-                    let cur_frame = self.getCurrentFunction().unwrap();
+                    let cur_frame = self.getCurrentFrame().unwrap();
                     let index = cur_frame.starting_index + slot as usize +1;
                     self.stk.push(self.stk.get(index).unwrap());
                }
@@ -291,7 +196,7 @@ impl VM {
                         Ok(val) => val,
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",err_msg))),
                     };
-                    let cur_frame = self.getCurrentFunction().unwrap();
+                    let cur_frame = self.getCurrentFrame().unwrap();
                     let index = cur_frame.starting_index + slot as usize+1;
 //                    println!("ABS Index {}, starting {}, slot {}", index, cur_frame.starting_index, slot);
                     self.stk.set(index, self.stk.peek(0).unwrap());
@@ -301,9 +206,8 @@ impl VM {
                     let name: Value =  self.read_constant();
                     let key: LoxString;
                     match name {
-                        Value::VAL_OBJ(pointer_stuff) => {
-                            let ptr = pointer_stuff.borrow();
-                            key = ptr.any().downcast_ref::<LoxString>().unwrap().clone();
+                        Value::VAL_STRING(new_key) => {
+                            key = new_key;
                         }
                         _ => {
                             return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Should have gotten a LoxString...")));
@@ -315,18 +219,16 @@ impl VM {
                             self.stk.push(value);
                         }
                         None => {
-                            return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Undefined variable {}.",key.val.clone())));
+                            return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Undefined variable {}.",key.name.clone())));
                         }
                      }
                }
                OpCode::OP_DEFINE_GLOBAL => { // Creating a new global variable 
                     let name: Value = self.read_constant();
                     match name {
-                        Value::VAL_OBJ(pointer_stuff) => {
-                               let ptr = pointer_stuff.borrow();
-                               let key = ptr.any().downcast_ref::<LoxString>().unwrap();
+                        Value::VAL_STRING(str) => {
                                let value = self.stk.peek(0).unwrap();
-                               self.globals.insert(key.clone(), value);
+                               self.globals.insert(str, value);
                         },
                         _ => { return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Tried accessing a global")))}
 
@@ -336,12 +238,10 @@ impl VM {
                OpCode::OP_SET_GLOBAL => { // updating an existing variable
                     let name: Value = self.read_constant();
                     match name {
-                        Value::VAL_OBJ(pointer_stuff) => {
-                               let ptr = pointer_stuff.borrow();
-                               let key = ptr.any().downcast_ref::<LoxString>().unwrap();
+                        Value::VAL_STRING(key) => {
                                let value = self.stk.peek(0).unwrap();
                                if self.globals.insert(key.clone(), value).is_none(){
-                                    return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Undefined variable {}.", key.val)))
+                                    return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Undefined variable {}.", key.name)))
                                }
                         },
                         _ => { return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}","Tried accessing a global")));}
@@ -420,85 +320,57 @@ impl VM {
                },
                OpCode::OP_ADD => { // addition of strings and numbers
                    // check if top of stack are both strings
-                   let a_string: Result<String, String> = match self.peek_stack(0, 
-                       std::mem::discriminant(&Value::VAL_OBJ(Rc::new(RefCell::new(LoxString::new("".to_string())))))){
-                        Ok(val) => { match val { Value::VAL_OBJ(v) => {
-                            let a_obj = v.borrow(); 
-                            Ok(a_obj.any().downcast_ref::<LoxString>().unwrap().val.clone())
-                        }, _ => {panic!("Unreachable");}}}
-                        Err(err_msg) => {Err(err_msg)},
-                   };
-                   let b_string: Result<String, String> = match self.peek_stack(1, 
-                    std::mem::discriminant(&Value::VAL_OBJ(Rc::new(RefCell::new(LoxString::new("".to_string())))))){
-                        Ok(val) => { match val { Value::VAL_OBJ(v) => {
-                            let b_obj = v.borrow(); 
-                            Ok(b_obj.any().downcast_ref::<LoxString>().unwrap().val.clone())
-                        }, _ => {panic!("Unreachable");}}}
-                        Err(err_msg) => {Err(err_msg)},
-                   };
-
-                    if (std::mem::discriminant(&a_string) == std::mem::discriminant(&b_string) )
-                        && (std::mem::discriminant(&a_string) == std::mem::discriminant(&Ok("".to_string()))){
-                            let a_val = a_string.unwrap();
-                            let b_val  = b_string.unwrap();
-                            let new_string = format!("{}{}",b_val, a_val);
-                            self.stk.pop();
-                            self.stk.pop();
-                            self.stk.push(Value::VAL_OBJ(Rc::new(RefCell::new(LoxString::new(new_string)) )));
-                        } 
-                   else{
-                        // doing floating point comparison
-                       let a_float: Result<f64,String> = match self.peek_stack(0, std::mem::discriminant(&Value::VAL_NUMBER(0.0))){
-                            Ok(val) => { match val { Value::VAL_NUMBER(v) => Ok(v), _ => {panic!("Unreachable");}}}
-                            Err(err_msg) => {Err(err_msg)},
-                       };
-                       let b_float: Result<f64, String> = match self.peek_stack(1, std::mem::discriminant(&Value::VAL_NUMBER(0.0))){
-                            Ok(val) => { match val { Value::VAL_NUMBER(v) => Ok(v), _ => {panic!("Unreachable");}}}
-                            Err(err_msg) => {Err(err_msg)},
+                   let a = self.stk.peek(0).expect("Unreachable");
+                   let b = self.stk.peek(1).expect("Unreachable");
+                   if a.get_type() == b.get_type() {
+                        let new_val = match a.get_type(){
+                            LoxType::STRING => {
+                                if let Value::VAL_STRING(a_val) = a{
+                                    if let Value::VAL_STRING(b_val) = b{
+                                        let new_str = format!("{}{}", b_val.name, a_val.name);
+                                        Value::VAL_STRING(LoxString::new(new_str))
+                                    } else {panic!()}
+                                } else {panic!()}
+                            },
+                             LoxType::NUMBER => {
+                                if let Value::VAL_NUMBER(a_val) = a{
+                                    if let Value::VAL_NUMBER(b_val) = b{
+                                        Value::VAL_NUMBER(a_val+b_val)
+                                    } else {panic!()}
+                                } else {panic!()}
+                            },
+                            _ => {
+                                return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Operands must be two numbers or two strings.")));
+                            }
                         };
-                        if std::mem::discriminant(&a_float) == std::mem::discriminant(&b_float) && 
-                            (std::mem::discriminant(&a_float) == std::mem::discriminant(&Ok(0.0))){
-                            // assuming you got here, you need to remove a and b from the stack first
-                            self.stk.pop();
-                            self.stk.pop();
-    
-                            self.stk.push(Value::VAL_NUMBER(a_float.unwrap()+b_float.unwrap()));
-                             
-                        } else {
-                            return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Operands must be two numbers or two strings.")));
-                        } 
-                    }                     
+                        self.stk.pop();
+                        self.stk.pop();
+                        self.stk.push(new_val);
+                   }
                },
                OpCode::OP_SUBTRACT |
                OpCode::OP_DIVIDE |
                OpCode::OP_MULTIPLY => {
-                        // doing floating point compariso
-                       let a_float: Result<f64,String> = match self.peek_stack(0, std::mem::discriminant(&Value::VAL_NUMBER(0.0))){
-                            Ok(val) => { match val { Value::VAL_NUMBER(v) => Ok(v), _ => {panic!("Unreachable");}}}
-                            Err(err_msg) => {Err(err_msg)},
-                       };
-                       let b_float: Result<f64, String> = match self.peek_stack(1, std::mem::discriminant(&Value::VAL_NUMBER(0.0))){
-                            Ok(val) => { match val { Value::VAL_NUMBER(v) => Ok(v), _ => {panic!("Unreachable");}}}
-                            Err(err_msg) => {Err(err_msg)},
-                        };
-                        if std::mem::discriminant(&a_float) == std::mem::discriminant(&b_float) && 
-                            (std::mem::discriminant(&a_float) == std::mem::discriminant(&Ok(0.0))){
-                            // assuming you got here, you need to remove a and b from the stack first
-                            self.stk.pop();
-                            self.stk.pop();
-    
-                            let output = match opcode {
-                                OpCode::OP_SUBTRACT => b_float.unwrap()-a_float.unwrap(),
-                                OpCode::OP_MULTIPLY => b_float.unwrap()*a_float.unwrap(),
-                                OpCode::OP_DIVIDE => b_float.unwrap()/a_float.unwrap(),
-                                _ => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Something went horrible wrong when trying to do a binary operation")))
-                            };
-                            self.stk.push(Value::VAL_NUMBER(output));     
-                        }
-                        else{ 
-                            return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Operands must be two numbers or two strings."))); 
-                        }
-               },
+                   let a = self.stk.peek(0).expect("Unreachable");
+                   let b = self.stk.peek(1).expect("Unreachable");
+                   if a.get_type() == b.get_type() && (a.get_type() == LoxType::NUMBER) {
+                       self.stk.pop();
+                       self.stk.pop();
+                       if let Value::VAL_NUMBER(a_float) = a {
+                            if let Value::VAL_NUMBER(b_float) = b{
+                               let output = match opcode {
+                                    OpCode::OP_SUBTRACT => { b_float-a_float},
+                                    OpCode::OP_MULTIPLY => b_float*a_float,
+                                    OpCode::OP_DIVIDE => b_float/a_float,
+                                    _ => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Something went horrible wrong when trying to do a binary operation")))
+                                };
+                                self.stk.push(Value::VAL_NUMBER(output));          
+                            } else {panic!()}
+                       } else {panic!()}
+                   } else {
+                        return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Operands must be two numbers or two strings."))); 
+                   }
+              },
                OpCode::OP_NOT => { // add the logical negation of top of stack
                    let val = self.stk.pop().unwrap();
                     self.stk.push(Value::VAL_BOOL(isFalsey(val)));
@@ -511,144 +383,84 @@ impl VM {
         // This is a wrapper around Call. It does type checking on the input Value to make sure
         // it's a callable
         match callee {
-            Value::VAL_OBJ(obj_ptr) => {
-                let obj = obj_ptr.borrow();
-                match obj.get_type() {
-                    crate::object::ObjType::OBJ_CLOSURE => {
-                        return self.Call(obj_ptr.clone(), argCount);
-                    },
-                    crate::object::ObjType::OBJ_FUNCTION => {
-                        return self.Call(obj_ptr.clone(), argCount);
-                   },
-                    crate::object::ObjType::OBJ_NATIVE => {
+            Value::VAL_CLOSURE(cls) => {
+                return self.Call( cls, argCount);
+            },
+           Value::VAL_NATIVE(native_func) => {
                         let fn_start = self.stk.size()- argCount as usize;
                         // execute the native function and  push the result onto the VM stack
-                        let result = (obj.any().downcast_ref::<ObjNative>().unwrap().function)(argCount as usize, fn_start);
+                        let result = native_func(argCount as usize, fn_start);
                         while (self.stk.size() > fn_start){
                             self.stk.pop();
                         }
                         self.stk.push(result);
                         return Ok(());
-                    }
-                    _ => {()} 
                 }
+            _ => {
+                return Err("Can only call functions and classes.".to_string());
             }
-            _ => {()}
         }
-        return Err("Can only call functions and classes.".to_string());
     }
 
-    fn captureUpvalue(&mut self, local: usize) -> Box<ObjUpvalue>{
-        let createdUpvalue = Box::new(ObjUpvalue::Open(local));
-        return createdUpvalue;
-    }
-
-    fn Call(&mut self, closure_wrapper: Rc<RefCell<dyn Obj>> , argCount: u8) -> Result<(),String>{
+    fn Call(&mut self, closure: LoxClosure , argCount: u8) -> Result<(),String>{
         // This does runtime checking that the number of input arguments matches the arity of the
         // function
-        self.frameCount += 1;
-        if(self.frameCount == 255){
+        if(self.frames.len()+1 == 255){
             return Err("Stack overflow.".to_string());
         }
-        let closure = closure_wrapper.borrow();
-        if argCount as usize !=
-            closure.any().downcast_ref::<LoxClosure>().unwrap().function.clone().unwrap().arity {
-            return Err(format!("Expected {} arguments but got {}.",closure.any().downcast_ref::<LoxFunction>().unwrap().arity, argCount));
+            if argCount as usize != closure.function.clone().arity {
+                    return Err(format!("Expected {} arguments but got {}.", closure.function.arity, argCount));
         }
         // Adds a new frame to the call stack
-        self.frames.push(
-            CallFrame::new(Rc::new(RefCell::new(closure.any().downcast_ref::<LoxClosure>().unwrap().clone())),
-            self.stk.size() - argCount as usize -1 )
-        );
-        return Ok(());
+            self.frames.push( CallFrame::new(Some(closure), self.stk.size() - argCount as usize -1 )); 
+       return Ok(());
     } 
 
     fn read_byte(&mut self) -> Result<u8, String> {
         // read one instruction from the current chunk
         // also advance ip by 1
-        let frame = self.getCurrentFunction();
+        let frame = self.getCurrentFrame();
         let f = frame.unwrap();
-        let output: Result<u8,String>;
-        match &f.closure {
+
+        let output = match &f.closure{
             Some(cls) =>{
-                match &cls.borrow().function{
-                    Some(fnc) => {
-                        match fnc.chunk.get_instr(f.ip) {
-                            Some(val) => output = Ok(*val),
-                            None => {
-                                let err_msg = format!("Out of bounds access of code: {}", f.ip);
-                                return Err(err_msg);
-                            }
-                        }
-                        f.ip += 1;
-                    },
-                    None => panic!("AAAAAAAAAAAA"),
+               match cls.function.chunk.get_instr(f.ip){
+                Some(val) => Ok(*val),
+                None => {
+                  let err_msg = format!("Out of bounds access of code: {}", f.ip);
+                  Err(err_msg)
                 }
-            },
-            None => panic!("AAAAAAAAA")
-        }
-       return output;
+              }
+            }
+            None => panic!()
+        };
+        f.ip += 1;
+        return output;
     }
  
-    fn peek_stack(&mut self,  index :usize, expected: std::mem::Discriminant<Value>) -> Result<Value, String> {
-        // check if top of stack matches the expected type
-        let b = match self.stk.peek(index){
-            Some(v) => {
-                // value matches expected value
-                if std::mem::discriminant(&v) == expected{
-                    v
-                } else {
-                    return Err(format!("stack at {} doesn't match expected: {:?}", index, &expected));
-                }
-            },
-            None => return Err("Stack is empty".to_string())
-        };
-        Ok(b)
-    }
-
     fn formatRunTimeError(&mut self, formatted_message: fmt::Arguments) -> String{
         // pretty printing runtime errors
         let err_msg = format!("{}\n",formatted_message);
-        let frame = self.getCurrentFunction().unwrap();
+        let frame = self.getCurrentFrame().unwrap();
         // ip points to the NEXT instruction to be executed, so need to decrement ip by 1
         let instruction = frame.ip - 1;
+        println!("Current Instr: {}", instruction);
         let line: usize;
+        let fname: String;
         match &frame.closure{
             Some(cls) => {
-                match &cls.borrow().function{
-                    Some(fnc) => {
-                        match fnc.chunk.get_line(instruction) {
-                            None => {
-                                panic!("AAAAA");
-                            }
-                            Some(val) => {line =  val.clone();} 
-                        }
-                    },
-                    None => {
-                        panic!("Invalid function");
-                    }
+                fname = cls.function.name.name.clone();
+                match cls.function.chunk.get_line(instruction){
+                    Some(val) => line = val.clone(),
+                    None => panic!()
                 }
-            },
-            None => panic!("AAAAAAAA")
+            }
+            None => panic!()
         }
-        let fname = match &frame.closure{
-            Some(cls) => {
-                match &cls.borrow().function{
-                    Some(function) => {
-                        match &function.name{
-                            Some(name) => name.val.clone(),
-                            None => "script".to_string(),
-                        }
-                    },
-                    None => "script".to_string()
-                }
-            },
-            None => "script".to_string()
-        };
-       let line_err = format!("[line {}] in {}\n", line, fname);
+      let line_err = format!("[line {}] in {}\n", line, fname);
 
         // stack trace
-        let mut cur_frame = self.frameCount-1;
+        let mut cur_frame = self.frames.len()-1;
         let mut stack_trace = "".to_string();
         while cur_frame >= 0 {
             match &self.frames.get_mut(cur_frame){
@@ -658,28 +470,13 @@ impl VM {
                 Some(frame) =>{
                     match &frame.closure{
                         Some(cls) => {
-                            match &cls.borrow().function{
-                                None => panic!("AAAAAAAAAA"),
-                                Some(function) => {
-                                    let instr = frame.ip;
-                                    let line_num = function.chunk.get_line(instr);
-                                    stack_trace = format!("{}[line {}] in", stack_trace, line_num.unwrap());
-                                    match &function.name{
-                                        None => {
-                                            stack_trace = format!("{} script\n",stack_trace );
-                                        }
-                                        Some(string) => {
-                                            stack_trace = format!("{} {}()\n",stack_trace, string.val.clone() );
-                                        }
-                                    }
-                                }
-                            }
-                        },
+                            stack_trace = format!("{} [line {}] in {}\n", stack_trace, cls.function.chunk.get_line(frame.ip).unwrap(), cls.function.name.name);
+                       },
                         None => panic!("AAAAAAAAAA")
                     }
                 }
             }
-            if (cur_frame == 0) {break;}
+            if cur_frame == 0 {break;}
             cur_frame -= 1;
         }
 
@@ -690,8 +487,8 @@ impl VM {
     fn defineNative(&mut self, name: LoxString, function: NativeFn){
         // The pushes and pops are weird garbage collector things that aren't really necessary in
         // a Rust-based VM
-        self.stk.push(Value::VAL_OBJ(Rc::new( RefCell::new(name.clone()))));
-        self.stk.push(Value::VAL_OBJ(Rc::new( RefCell::new(ObjNative::new(function)))));
+        self.stk.push(Value::VAL_STRING(name.clone()));
+        self.stk.push(Value::VAL_NATIVE(function));
         self.globals.insert( name, self.stk.get(1).unwrap());
         self.stk.pop();
         self.stk.pop();
@@ -699,52 +496,30 @@ impl VM {
 
     fn read_short(&mut self) -> u16{
         // read the next two bytes in the chunk, incrementing the ip as needed
-        self.getCurrentFunction().unwrap().ip += 2;
-        let ip = self.getCurrentFunction().unwrap().ip;
+        self.getCurrentFrame().unwrap().ip += 2;
+        let ip = self.getCurrentFrame().unwrap().ip;
         let higher_byte: u16;
         let lower_byte: u16;
-        match &self.getCurrentFunction().unwrap().closure {
+        match &self.getCurrentFrame().unwrap().closure {
             Some(cls) => {
-                match &cls.borrow().function {
-                    Some(fnc) => {
-                        match fnc.chunk.get_instr(ip-2) {
-                            Some(val) => higher_byte = *val as u16,
-                            None => {
-                                panic!("Out of bounds access of code: {}", ip);
-                            }
-                        }
-                        match fnc.chunk.get_instr(ip-1){
-                            Some(val) => lower_byte = *val as u16,
-                            None => {
-                                panic!("Out of bounds access of code: {}", ip);
-                            }
-                        }
-                    },
-                    None => panic!("AAAAAAAAAAAA"),
-                }
-            }
+                higher_byte = *cls.function.chunk.get_instr(ip-2).unwrap() as u16;
+                lower_byte = *cls.function.chunk.get_instr(ip-1).unwrap() as u16;
+           }
             None => panic!("AAAAAAAAA")
        }
+//        println!("High {}, Low {}, IP {}", higher_byte, lower_byte, ip );
         return  (higher_byte << 8 ) | lower_byte;
-
     }
 
     fn read_constant(&mut self) -> Value {
         // read a value from the chunk and return the value. Don't mess with the stack
         let index = self.read_byte().unwrap();
-        let frame = self.getCurrentFunction().unwrap();
+        let frame = self.getCurrentFrame().unwrap();
         let output: Value;
         match &frame.closure{
             Some(cls) => {
-               match &cls.borrow().function{
-                   Some(fnc) => {
-                       match fnc.chunk.get_constant(index as usize) {
-                           None => {panic!("Out of bounds access of code: {}", frame.ip);}
-                           Some(val) => {output =  val.clone();} 
-                       }
-                   },
-                   None => panic!("AAAA"),
-               }
+               output = cls.function.chunk.get_constant(index as usize)
+                   .expect(&format!("Out of bounds access of code: {}", frame.ip).to_owned()).clone();
             }
             None => {
                 panic!("Invalid function");
@@ -753,8 +528,9 @@ impl VM {
         return output;
     }
 
-    fn getCurrentFunction(&mut self) -> Option<&mut CallFrame>{
+    fn getCurrentFrame(&mut self) -> Option<&mut CallFrame>{
         // helper function to get the top CallFrame
-        self.frames.get_mut(self.frameCount-1)
+        let length = self.frames.len();
+        self.frames.get_mut(length-1)
     }
 }

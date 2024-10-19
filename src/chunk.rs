@@ -1,7 +1,6 @@
 #![allow(non_camel_case_types)]
 
-use crate::value::{Value, ValueArray};
-use crate::object::LoxFunction;
+use crate::value::Value;
 
 // Growing list of supported opcodes
 #[derive(FromPrimitive)]
@@ -40,13 +39,13 @@ pub enum OpCode {
 #[derive(Clone)]
 pub struct Chunk {
     code: Vec<u8>, // holds the byte code for the chunk
-    value_array: ValueArray, // hold the values of the chunk as floats
+    value_array: Vec<Value>, // hold the values of the chunk as floats
     lines: Vec<usize>, // for a given instruction, store the line where it was originated from
 }
 
 impl Chunk {
     pub fn new() -> Self{
-        Chunk {code: Vec::new(), value_array: ValueArray::new(), lines: Vec::new()}
+        Chunk {code: Vec::new(), value_array: Vec::new(), lines: Vec::new()}
     }
 
     pub fn write_chunk(&mut self, data: u8, line: usize){
@@ -66,12 +65,12 @@ impl Chunk {
     }
 
     pub fn add_constant(&mut self, new_val: Value) ->usize{
-        self.value_array.write_value(new_val);
-        return self.value_array.get_count()-1; // returns position of start of opcode (hopefully).
+        self.value_array.push(new_val);
+        return self.value_array.len()-1; // returns position of start of opcode (hopefully).
     }
 
     pub fn get_constant(&self, index: usize) -> Option<&Value>{
-        self.value_array.get_value(index)
+        self.value_array.get(index)
     }
 
     pub fn get_count(&self) ->usize{
@@ -103,35 +102,15 @@ impl Chunk {
                     OpCode::OP_PRINT => self.simple_instruction("OP_PRINT".to_string(), offset)?,
                     OpCode::OP_CALL => self.byte_instruction("OP_CALL".to_string(), offset)?,
                     OpCode::OP_CLOSURE => {
-                        let mut cur_offset = offset + 1;
-                        let constant = self.get_instr(cur_offset).unwrap();
+                        let mut cur_offset = offset;             
                         cur_offset += 1;
-                        println!("{} {} {:?}", "OP_CLOSURE", constant, self.get_constant(*constant as usize).unwrap());
-                        match self.get_constant(*constant as usize){
-                            Some(val) => {
-                                match val{
-                                    Value::VAL_OBJ(pointer_stuff) => {
-                                        let ptr = pointer_stuff.borrow();
-                                        let func = ptr.any().downcast_ref::<LoxFunction>().unwrap().clone();
-                                        for _i in 0..func.upvalueCount{
-                                            let isLocal = self.get_instr(cur_offset).unwrap();
-                                            cur_offset += 1;
-                                            let index = self.get_instr(cur_offset).unwrap();
-                                            cur_offset += 1;
-                                            let var_type = match isLocal{
-                                                1 => "local",
-                                                0 => "upvalue",
-                                                _ => panic!("AAA")
-                                            };
-                                            print!("{} | {} {}", cur_offset-2, var_type, index);
-                                        }
-                                    },
-                                    _ => panic!("AAAAAA")
-                                }
-                             },
-                            None => {}
-                        }
+                        let constant = self.code.get(cur_offset).unwrap();
+                        cur_offset += 1;
+                        print!("{} {}", "OP_CLOSURE", constant);
+                        self.get_constant(*constant as usize).unwrap().print_value();
+                        println!("");
                         return Ok(cur_offset);
+    
                     },
                     OpCode::OP_RETURN => self.simple_instruction("OP_RETURN".to_string(), offset)?,
                     OpCode::OP_NIL => self.simple_instruction("OP_NIL".to_string(), offset)?,
@@ -182,7 +161,7 @@ impl Chunk {
             return Ok(offset+1);
         },
         Some(const_index) => {
-            match self.value_array.get_value(*const_index as usize) {
+            match self.value_array.get(*const_index as usize) {
                 None =>  return Err(format!("Trying to access {} outside of value range", *const_index)),
                 Some (value) =>{
                     print!("{}", format!("{:<16} {:4} '", name, *const_index));
