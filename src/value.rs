@@ -1,6 +1,8 @@
 #![allow(non_camel_case_types)]
 
 use crate::chunk::*;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 #[derive(Clone,Debug, PartialEq)]
 pub enum LoxType{
@@ -11,6 +13,11 @@ pub enum LoxType{
     FUNCTION,
     NATIVE,
     CLOSURE
+}
+
+pub enum Upvalue{
+    Open(usize),
+    Closed(Value)
 }
 
 #[derive(Clone, PartialEq)]
@@ -52,6 +59,7 @@ impl LoxFunction{
 #[derive(Clone)]
 pub struct LoxClosure{
     pub function: LoxFunction,
+    pub upvalues: Vec<Rc<RefCell<Upvalue>>>
 }
 
 pub type NativeFn = fn(usize, usize) -> Value;

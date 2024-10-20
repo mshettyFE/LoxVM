@@ -614,7 +614,7 @@ impl Parser{
                 index
             },
             None => {
-                match self.resolveUpvalue(Some(top_compiler_index), name.clone()){
+                match self.resolveUpvalue(top_compiler_index, name.clone()){
                     Some(i) => {
                         getOp  = OpCode::OP_GET_UPVALUE; 
                         setOp  = OpCode::OP_SET_UPVALUE; 
@@ -657,41 +657,21 @@ impl Parser{
         return None;
     }
 
-    fn resolveUpvalue(&mut self, potential_index: Option<usize >, name: Token) -> Option<u8> {
-        match potential_index{
-            Some(index) => {
-                match self.compilerStack.get_mut(index) {
-                    Some(_comp) => {
-                        match self.resolveLocal(index, name.clone()){
-                            Some(local) => {
-                            return Some(self.addUpvalue(index, local, true));
-                        },
-                    None => { () }
-                }
-                let upvalue = match index{
-                    0 => self.resolveUpvalue(None, name),
-                    _ => self.resolveUpvalue(Some(index-1), name)
-                };
-                match upvalue{
-                    Some(val) =>{
-                        return Some(self.addUpvalue(index, val, true));
-                    },
-                    None =>{
-                        ()
-                    }
-                }
+    fn resolveUpvalue(&mut self, index: usize, name: Token) -> Option<u8> {
+        let _comp =  self.compilerStack.get_mut(index).unwrap();
+            match self.resolveLocal(index, name.clone()){
+                Some(local) => return Some(self.addUpvalue(index, local, true)),
+                None => () 
             }
-            None => {
-                return None
+            let upvalue = match index{
+                0 => return None,
+                _ => self.resolveUpvalue( index-1, name)
+            };
+            match upvalue{
+                Some(val) => return Some(self.addUpvalue(index, val, true)),
+                None => ()
             }
-        }
-        return None;
- 
-            },
-            None => {
-                return None;
-            }
-        }
+     return None; 
    }
 
     fn addUpvalue(&mut self, compiler_index: usize,  index: u8, isLocal: bool ) -> u8{
@@ -706,17 +686,9 @@ impl Parser{
         let get_prefix: Option<ParseRule> = self.getRule(self.previous.ttype.clone());
         match get_prefix {
             Some(val) => {
-                match val.prefix{
-                    // after unwrapping everything, execute the prefix function
-                    Some(prefix_func) => {
-                        canAssign = init_precedence <= Precedence::PREC_ASSIGNMENT;
-                        prefix_func(self, scanner, canAssign);
-                    },
-                    None => {
-                        panic!("Something went horribly wrong");
-                        return ;
-                    }
-                }
+                let prefix_func = val.prefix.expect("Somethingg went horribly wrong while parsing");
+                canAssign = init_precedence <= Precedence::PREC_ASSIGNMENT;
+                prefix_func(self, scanner, canAssign);
             }
             None => {
                 self.errorAt("Out of bounds of rule table".to_string(), ErrorTokenLoc::PREVIOUS);

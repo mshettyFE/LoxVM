@@ -1,6 +1,8 @@
 #![allow(non_camel_case_types)]
 
 use crate::{chunk::OpCode, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
+use std::rc::Rc;
+use std::cell::RefCell;
 use crate:: stack::LoxStack;
 use crate::value::*;
 use crate::compiler::*;
@@ -16,7 +18,7 @@ pub enum InterpretResult {
 
 // the current function being executed, as well as where in the VM the function starts at
 pub struct CallFrame{
-    pub closure: Option<LoxClosure>,
+    pub closure: LoxClosure,
     pub ip: usize, // ip relative to the current function (so 0 is the start of the current
                          // function, which has no relationship to other functions due to how the
                          // call stack is structured)
@@ -24,7 +26,7 @@ pub struct CallFrame{
 }
 
 impl CallFrame {
-    pub fn new(cls: Option<LoxClosure>, new_starting_index: usize) -> Self{
+    pub fn new(cls: LoxClosure, new_starting_index: usize) -> Self{
         CallFrame{closure: cls, ip: 0, starting_index: new_starting_index} 
     }
 }
@@ -34,6 +36,7 @@ pub struct VM{
     stk: LoxStack, // value stack 
     globals: LoxTable,  // global vars
     parser: Parser, // Bundled here b/c Rust is paranoid
+    upvalues: Vec<Rc<RefCell<Upvalue>>> // list of pointers to upvalues
 }
 
 pub fn clockNative(_argC: usize, _value_index: usize) -> Value{
@@ -48,6 +51,7 @@ impl VM {
         globals: LoxTable::new(),
         stk: LoxStack::new(),
         parser: Parser::new(),
+        upvalues: Vec::new()
         };
 
         // native functions get defined here
@@ -63,7 +67,7 @@ impl VM {
         match self.parser.compile(&mut scanner){
             None => return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string()),
             Some(comp) => {
-                self.stk.push(Value::VAL_CLOSURE(LoxClosure { function: comp.function }));
+                self.stk.push(Value::VAL_CLOSURE(LoxClosure { function: comp.function, upvalues: Vec::new() }));
                 // this callValue simple executes the top level function
                 match self.callValue(self.stk.peek(0).unwrap(), 0){
                         Err(str) => { return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str)))}
@@ -78,21 +82,10 @@ impl VM {
 
     fn run(&mut self) -> InterpretResult {
         loop {
-             match DEBUG_TRACE_EXEC.get() {
-                 // assumes that each chunk has starting ip of 0
-                 Some(val) => {
-                     if *val {
-                        self.stk.print();
-                        let frame = self.getCurrentFrame().unwrap();
-                        match &frame.closure {
-                            Some(cls) => {
-                                cls.function.chunk.disassemble_instruction(frame.ip);
-                           },
-                            None => panic!("AAAAAAAA")
-                       }
-                    }
-                 }
-                 None => panic!("DEBUG_TRACE_EXEC is somehow empty"), 
+             if *DEBUG_TRACE_EXEC.get().unwrap(){
+               self.stk.print();
+               let frame = self.getCurrentFrame();
+               let _ = frame.closure.function.chunk.disassemble_instruction(frame.ip); 
              }
              // get current instruction to run in the current chunk
              let instruction_number  = match self.read_byte(){
@@ -118,17 +111,17 @@ impl VM {
                 OpCode::OP_LOOP => {
                     let offset = self.read_short(); // How many addresses back do we need to jump
                                                     // backwards
-                    self.getCurrentFrame().unwrap().ip -= offset as usize;
+                    self.getCurrentFrame().ip -= offset as usize;
                 }
                 OpCode::OP_JUMP =>{ // unconditional jump
                     let offset = self.read_short(); // How many addresses do we need to jump ahead
-                    self.getCurrentFrame().unwrap().ip += offset as usize;
+                    self.getCurrentFrame().ip += offset as usize;
                 }
                 OpCode::OP_JUMP_IF_FALSE => {
                     let offset = self.read_short();
                     if isFalsey(self.stk.peek(0).unwrap()) { // If top of stack if false, jump
                                                              // ahead
-                        self.getCurrentFrame().unwrap().ip += offset as usize;
+                        self.getCurrentFrame().ip += offset as usize;
                     }
                 },
                 OpCode::OP_CALL => { // execute the function
@@ -140,7 +133,7 @@ impl VM {
                 },
                 OpCode::OP_CLOSURE => {
                     if let Value::VAL_FUNCTION(func) = self.read_constant(){
-                        self.stk.push(Value::VAL_CLOSURE(LoxClosure{function: func}))
+                        self.stk.push(Value::VAL_CLOSURE(LoxClosure{function: func, upvalues: Vec::new()}))
                     } else {panic!()}
               },
                OpCode::OP_GET_UPVALUE => {
@@ -152,7 +145,7 @@ impl VM {
                 OpCode::OP_RETURN => { // return from function
                     let result = self.stk.pop();
                     // clean up the stack to until the current function call gets erased
-                    let current_pointer = self.getCurrentFrame().unwrap().starting_index;
+                    let current_pointer = self.getCurrentFrame().starting_index;
                     while self.stk.size() > current_pointer{
                         self.stk.pop();
                     }
@@ -187,8 +180,7 @@ impl VM {
                         Ok(val) => val,
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",err_msg))),
                     };
-                    let cur_frame = self.getCurrentFrame().unwrap();
-                    let index = cur_frame.starting_index + slot as usize +1;
+                    let index = self.getCurrentFrame().starting_index + slot as usize +1;
                     self.stk.push(self.stk.get(index).unwrap());
                }
                OpCode::OP_SET_LOCAL => { // get location of variable in stack, then update value
@@ -196,8 +188,7 @@ impl VM {
                         Ok(val) => val,
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",err_msg))),
                     };
-                    let cur_frame = self.getCurrentFrame().unwrap();
-                    let index = cur_frame.starting_index + slot as usize+1;
+                    let index = self.getCurrentFrame().starting_index + slot as usize+1;
 //                    println!("ABS Index {}, starting {}, slot {}", index, cur_frame.starting_index, slot);
                     self.stk.set(index, self.stk.peek(0).unwrap());
                }
@@ -412,27 +403,21 @@ impl VM {
                     return Err(format!("Expected {} arguments but got {}.", closure.function.arity, argCount));
         }
         // Adds a new frame to the call stack
-            self.frames.push( CallFrame::new(Some(closure), self.stk.size() - argCount as usize -1 )); 
+            self.frames.push( CallFrame::new(closure, self.stk.size() - argCount as usize -1 )); 
        return Ok(());
     } 
 
     fn read_byte(&mut self) -> Result<u8, String> {
         // read one instruction from the current chunk
         // also advance ip by 1
-        let frame = self.getCurrentFrame();
-        let f = frame.unwrap();
+        let f = self.getCurrentFrame();
 
-        let output = match &f.closure{
-            Some(cls) =>{
-               match cls.function.chunk.get_instr(f.ip){
+        let output = match f.closure.function.chunk.get_instr(f.ip){
                 Some(val) => Ok(*val),
                 None => {
                   let err_msg = format!("Out of bounds access of code: {}", f.ip);
                   Err(err_msg)
-                }
-              }
-            }
-            None => panic!()
+                } 
         };
         f.ip += 1;
         return output;
@@ -441,41 +426,23 @@ impl VM {
     fn formatRunTimeError(&mut self, formatted_message: fmt::Arguments) -> String{
         // pretty printing runtime errors
         let err_msg = format!("{}\n",formatted_message);
-        let frame = self.getCurrentFrame().unwrap();
+        let frame = self.getCurrentFrame();
         // ip points to the NEXT instruction to be executed, so need to decrement ip by 1
         let instruction = frame.ip - 1;
         println!("Current Instr: {}", instruction);
         let line: usize;
-        let fname: String;
-        match &frame.closure{
-            Some(cls) => {
-                fname = cls.function.name.name.clone();
-                match cls.function.chunk.get_line(instruction){
+        match frame.closure.function.chunk.get_line(instruction){
                     Some(val) => line = val.clone(),
                     None => panic!()
-                }
-            }
-            None => panic!()
         }
-      let line_err = format!("[line {}] in {}\n", line, fname);
+        let line_err = format!("[line {}] in {}\n", line,  frame.closure.function.name.name);
 
         // stack trace
         let mut cur_frame = self.frames.len()-1;
         let mut stack_trace = "".to_string();
         while cur_frame >= 0 {
-            match &self.frames.get_mut(cur_frame){
-                None => {
-                    panic!("AAAAAAAAAAAAAAA");
-                }
-                Some(frame) =>{
-                    match &frame.closure{
-                        Some(cls) => {
-                            stack_trace = format!("{} [line {}] in {}\n", stack_trace, cls.function.chunk.get_line(frame.ip).unwrap(), cls.function.name.name);
-                       },
-                        None => panic!("AAAAAAAAAA")
-                    }
-                }
-            }
+            let frame =  self.frames.get_mut(cur_frame).unwrap();
+            stack_trace = format!("{} [line {}] in {}\n", stack_trace, frame.closure.function.chunk.get_line(frame.ip).unwrap(), frame.closure.function.name.name);
             if cur_frame == 0 {break;}
             cur_frame -= 1;
         }
@@ -496,17 +463,10 @@ impl VM {
 
     fn read_short(&mut self) -> u16{
         // read the next two bytes in the chunk, incrementing the ip as needed
-        self.getCurrentFrame().unwrap().ip += 2;
-        let ip = self.getCurrentFrame().unwrap().ip;
-        let higher_byte: u16;
-        let lower_byte: u16;
-        match &self.getCurrentFrame().unwrap().closure {
-            Some(cls) => {
-                higher_byte = *cls.function.chunk.get_instr(ip-2).unwrap() as u16;
-                lower_byte = *cls.function.chunk.get_instr(ip-1).unwrap() as u16;
-           }
-            None => panic!("AAAAAAAAA")
-       }
+        let frame = self.getCurrentFrame();
+        frame.ip += 2;
+        let higher_byte = *frame.closure.function.chunk.get_instr(frame.ip-2).unwrap() as u16;
+        let lower_byte = *frame.closure.function.chunk.get_instr(frame.ip-1).unwrap() as u16;
 //        println!("High {}, Low {}, IP {}", higher_byte, lower_byte, ip );
         return  (higher_byte << 8 ) | lower_byte;
     }
@@ -514,23 +474,13 @@ impl VM {
     fn read_constant(&mut self) -> Value {
         // read a value from the chunk and return the value. Don't mess with the stack
         let index = self.read_byte().unwrap();
-        let frame = self.getCurrentFrame().unwrap();
-        let output: Value;
-        match &frame.closure{
-            Some(cls) => {
-               output = cls.function.chunk.get_constant(index as usize)
-                   .expect(&format!("Out of bounds access of code: {}", frame.ip).to_owned()).clone();
-            }
-            None => {
-                panic!("Invalid function");
-            }
-        }
-        return output;
+        let frame = self.getCurrentFrame();
+        return frame.closure.function.chunk.get_constant(index as usize).expect("Out of bound error").clone();
     }
 
-    fn getCurrentFrame(&mut self) -> Option<&mut CallFrame>{
+    fn getCurrentFrame(&mut self) -> &mut CallFrame{
         // helper function to get the top CallFrame
         let length = self.frames.len();
-        self.frames.get_mut(length-1)
+        self.frames.get_mut(length-1).unwrap()
     }
 }
