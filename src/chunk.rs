@@ -106,9 +106,22 @@ impl Chunk {
                         cur_offset += 1;
                         let constant = self.code.get(cur_offset).unwrap();
                         cur_offset += 1;
-                        print!("{} {}", "OP_CLOSURE", constant);
+                        print!("{} {} ", "OP_CLOSURE", constant);
                         self.get_constant(*constant as usize).unwrap().print_value();
                         println!("");
+                        match self.get_constant(*constant as usize).unwrap(){
+                            Value::VAL_FUNCTION(func) => {
+                                for _ in 0..func.upvalueCount{
+                                    let isLocal = self.get_instr(cur_offset).unwrap();
+                                    let local_name = match isLocal {1 => "local", 0 => "upvalue", _ => panic!()};
+                                    cur_offset += 1;
+                                    let index = self.get_instr(cur_offset).unwrap();
+                                    cur_offset += 1;
+                                    println!("{:4}    |     {} {}", cur_offset-2, local_name, index);
+                                } 
+                            },
+                            _ => panic!()
+                        }
                         return Ok(cur_offset);
     
                     },

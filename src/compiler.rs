@@ -2,6 +2,8 @@
 use crate::scanner::{Token, TokenType, Scanner};
 use crate::chunk::{Chunk, OpCode};
 use crate::value::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 use crate::DEBUG_PRINT_CODE;
 use std::mem;
 
@@ -21,7 +23,8 @@ pub struct Compiler {
     ftype: FunctionType, // tells you if the current function is main
     locals: Vec<Locals>, // a stack of local variables that are accessible in the current scope
     localCount: u64, // a count of the number of variables accessible in the current scope
-    scopeDepth: u64 // the current scope
+    scopeDepth: u64, // the current scope
+    upvalues: Vec<Rc<RefCell<Upvalue>>>  // upvalues needed by function
 }
 
 impl Compiler {
@@ -34,7 +37,8 @@ impl Compiler {
                     ftype: new_ftype,
                     locals: Vec::new(),
                     localCount: 0,
-                    scopeDepth: 0
+                    scopeDepth: 0,
+                    upvalues: Vec::new()
                 }
             },
             // the "main" function goes here
@@ -44,7 +48,8 @@ impl Compiler {
                     ftype: new_ftype,
                     locals: Vec::new(),
                     localCount: 0,
-                    scopeDepth: 0
+                    scopeDepth: 0,
+                    upvalues: Vec::new()
                 }
             }
         }
@@ -623,7 +628,7 @@ impl Parser{
                     None => {
                         getOp = OpCode::OP_GET_GLOBAL;
                         setOp = OpCode::OP_SET_GLOBAL;
-                        self.identifierConstant(name)
+                        self.identifierConstant(name) 
                     }
                 }    
             }
@@ -658,24 +663,46 @@ impl Parser{
     }
 
     fn resolveUpvalue(&mut self, index: usize, name: Token) -> Option<u8> {
-        let _comp =  self.compilerStack.get_mut(index).unwrap();
-            match self.resolveLocal(index, name.clone()){
-                Some(local) => return Some(self.addUpvalue(index, local, true)),
+        match  self.compilerStack.get_mut(index){
+            Some(_comp) => (),
+            None => return None
+        }
+        match index{
+            0 => return None,
+            _ => match self.resolveLocal(index-1, name.clone()){
+                Some(local) => return Some(self.addUpvalue(index, local as usize, true)),
                 None => () 
             }
-            let upvalue = match index{
+        }
+        let upvalue = match index{
                 0 => return None,
                 _ => self.resolveUpvalue( index-1, name)
-            };
-            match upvalue{
-                Some(val) => return Some(self.addUpvalue(index, val, true)),
-                None => ()
-            }
-     return None; 
+        };
+        match upvalue{
+                Some(val) =>return Some(self.addUpvalue(index, val as usize, false)),
+                None => return None
+        }
    }
 
-    fn addUpvalue(&mut self, compiler_index: usize,  index: u8, isLocal: bool ) -> u8{
-        todo!()
+    fn addUpvalue(&mut self, compiler_index: usize,  index: usize, isLocal: bool ) -> u8{
+        let comp = self.compilerStack.get_mut(compiler_index).unwrap();
+        for i in 0..comp.upvalues.len(){
+            match *comp.upvalues[i].borrow(){
+                Upvalue::Open(idx)  => {
+                    if(idx.index == index) && (idx.isLocal == isLocal){
+                        return i as u8
+                    }
+                },
+                Upvalue::Closed(_) => panic!()
+            }
+       }
+        if (comp.upvalues.len()+1 >= 255){
+            self.errorAt("Too many closure variables in function".to_string(), ErrorTokenLoc::PREVIOUS);
+            return 0;
+        }
+        comp.upvalues.push(Rc::new(RefCell::new(Upvalue::Open(UpvalueIndex::new(index, isLocal))  )));
+        comp.function.upvalueCount = comp.upvalues.len();
+        return comp.upvalues.len() as u8
    }
     
 // the function that handles precedence and allows recursion to occur
@@ -955,13 +982,28 @@ impl Parser{
         self.block(scanner);
 
         // Return from the function an store value on stack
-        let comp = self.endParser();
+        let comp = self.endParser().unwrap();
 
         // save closure to vm
-        let new_val = Value::VAL_FUNCTION(comp.unwrap().function);
+        let new_val = Value::VAL_FUNCTION(comp.function);
         let b = self.makeConstant(new_val);
         self.emitTwoBytes(OpCode::OP_CLOSURE as u8, b);
-
+        let mut isLocalVec: Vec<u8> = Vec::new();
+        let mut IndexVec: Vec<u8> = Vec::new();
+        for i in 0..comp.upvalues.len(){
+              match *comp.upvalues[i].borrow(){
+                Upvalue::Open(idx) => {
+                  let x = match idx.isLocal {true => 1, false => 0}; 
+                  isLocalVec.push(x);
+                  IndexVec.push(idx.index as u8);
+                }
+                _ => panic!()
+              }
+            }
+            for i in 0..isLocalVec.len(){
+                self.emitByte(isLocalVec[i]);
+                self.emitByte(IndexVec[i]);
+            }
     }
 
     fn endParser(&mut self) -> Option<Compiler>{

@@ -133,14 +133,42 @@ impl VM {
                 },
                 OpCode::OP_CLOSURE => {
                     if let Value::VAL_FUNCTION(func) = self.read_constant(){
-                        self.stk.push(Value::VAL_CLOSURE(LoxClosure{function: func, upvalues: Vec::new()}))
+                        let mut new_upvalues: Vec<Rc<RefCell<Upvalue>>> = Vec::new();
+                        for _ in 0..func.upvalueCount{
+                            let isLocal = self.read_byte().unwrap();
+                            let index = self.read_byte().unwrap();
+                            let new_upvalue = match isLocal{
+                                1 => {
+                                    let new_index = self.getCurrentFrame().starting_index+index as usize;
+                                    Rc::new(RefCell::new(self.captureUpvalue(new_index)))
+                                },
+                                0 => self.getCurrentFrame().closure.upvalues[index as usize].clone(),
+                                _ => panic!()
+                            };
+                            new_upvalues.push(new_upvalue);
+                        }
+                        let new_c = Value::VAL_CLOSURE(LoxClosure{function: func, upvalues:  new_upvalues });
+                        self.stk.push(new_c);
                     } else {panic!()}
               },
                OpCode::OP_GET_UPVALUE => {
-                   todo!()
+                   let slot = self.read_byte().unwrap();
+                   let upvalue_copy = self.getCurrentFrame().closure.upvalues[slot as usize-1].borrow().clone();
+                   match upvalue_copy{
+                     Upvalue::Open(idx) => self.stk.push(self.stk.get(idx.index).unwrap()),
+                     _ => panic!()
+                   }
               },
                OpCode::OP_SET_UPVALUE => {
-                   todo!()
+                   let slot = self.read_byte().unwrap();
+                   match self.stk.peek(0){
+                        Some(val) => {
+                            if let Value::VAL_UPVALUE(up_val) = val{
+                                self.getCurrentFrame().closure.upvalues[slot as usize] = Rc::new(RefCell::new(up_val)); 
+                            } else {panic!()}
+                        }
+                        None => panic!()
+                    }
               },
                 OpCode::OP_RETURN => { // return from function
                     let result = self.stk.pop();
@@ -391,6 +419,10 @@ impl VM {
                 return Err("Can only call functions and classes.".to_string());
             }
         }
+    }
+
+    fn captureUpvalue(&mut self, index: usize) -> Upvalue{
+        return Upvalue::Open(UpvalueIndex::new(index, true));
     }
 
     fn Call(&mut self, closure: LoxClosure , argCount: u8) -> Result<(),String>{

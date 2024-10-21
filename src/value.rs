@@ -12,12 +12,26 @@ pub enum LoxType{
     STRING,
     FUNCTION,
     NATIVE,
-    CLOSURE
+    CLOSURE,
+    UPVALUE
 }
 
+#[derive(Clone, Copy)]
+pub struct UpvalueIndex{
+    pub index: usize,
+    pub isLocal: bool
+}
+
+impl UpvalueIndex{
+    pub fn new(nindex: usize, nisLocal: bool) -> Self{
+        UpvalueIndex{index:nindex, isLocal: nisLocal}
+    }
+}
+
+#[derive(Clone)]
 pub enum Upvalue{
-    Open(usize),
-    Closed(Value)
+    Open(UpvalueIndex),
+    Closed(Box<Value>)
 }
 
 #[derive(Clone, PartialEq)]
@@ -47,12 +61,13 @@ impl LoxString{
 pub struct LoxFunction{
     pub arity: usize,
     pub name: LoxString,
-    pub chunk: Chunk
+    pub chunk: Chunk,
+    pub upvalueCount: usize
 }
 
 impl LoxFunction{
     pub fn new( new_arity: usize, new_name: LoxString) -> Self{
-        LoxFunction{arity: new_arity, name: new_name, chunk: Chunk::new()}
+        LoxFunction{arity: new_arity, name: new_name, chunk: Chunk::new(), upvalueCount: 0}
     }
 }
 
@@ -73,7 +88,8 @@ pub enum Value {
     VAL_STRING(LoxString),
     VAL_FUNCTION(LoxFunction),
     VAL_NATIVE(NativeFn),
-    VAL_CLOSURE(LoxClosure)
+    VAL_CLOSURE(LoxClosure),
+    VAL_UPVALUE(Upvalue)
 }
 
 impl std::fmt::Debug for Value{
@@ -95,7 +111,8 @@ impl Value {
             Value::VAL_STRING(name) => print!("{}", name.name),
             Value::VAL_FUNCTION(func) => print!("{}", func.name.name),
             Value::VAL_NATIVE(_) => print!("<native fn>"),
-            Value::VAL_CLOSURE(closure) => { print!("{}",closure.function.name.name)} 
+            Value::VAL_CLOSURE(closure) => { print!("{}",closure.function.name.name)},
+            Value::VAL_UPVALUE(_) => print!("upvalue")
        }
     }
 
@@ -107,7 +124,8 @@ impl Value {
             Value::VAL_STRING(_) => LoxType::STRING,
             Value::VAL_FUNCTION(_) => LoxType::FUNCTION,
             Value::VAL_NATIVE(_) => LoxType::NATIVE,
-            Value::VAL_CLOSURE(_) => LoxType::CLOSURE
+            Value::VAL_CLOSURE(_) => LoxType::CLOSURE,
+            Value::VAL_UPVALUE(_) => LoxType::UPVALUE
         }
     }
 }
