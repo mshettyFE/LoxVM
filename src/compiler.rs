@@ -638,37 +638,30 @@ impl Parser{
                     // prevent self initialization
                     self.errorAt("Can't read local variable in it's own initializer".to_string(), ErrorTokenLoc::PREVIOUS);
                 }
-                return Some(index as u8);                
+                return Some(index as u8); 
             }
             index -= 1;
         }
         return None;
     }
 
-    fn resolveUpvalue(&mut self, index: usize, name: Token) -> Option<u8> {
-        match  self.compilerStack.get_mut(index){
-            Some(_comp) => {},
-            None => return None
+    fn resolveUpvalue(&mut self, compiler_index: usize, name: Token) -> Option<u8> {
+        // If at base of compilerStack, then you can reference a wrapping closure
+        if compiler_index == 0 {return None}
+        match self.resolveLocal(compiler_index-1, name.clone()){
+            Some(local) =>{
+                self.compilerStack.get_mut(compiler_index-1).unwrap().locals[local as usize].isCaptured = true;
+                return Some(self.addUpvalue(compiler_index, local as usize, true))
+            },
+            None => {
+                let upvalue = self.resolveUpvalue(compiler_index-1, name);
+                match upvalue{
+                    Some(val) => return Some(self.addUpvalue(compiler_index, val as usize, false)),
+                    None => return None
+                }
+            } 
         }
-        match index{
-            0 => return None,
-            _ => match self.resolveLocal(index-1, name.clone()){
-                Some(local) =>{
-                    let enclosing = self.compilerStack.get_mut(index-1).unwrap();
-                    enclosing.locals[local as usize].isCaptured = true;
-                    return Some(self.addUpvalue(index, local as usize, true))
-                },
-                None => {
-                    if index == 0 {return None}
-                    let upvalue = self.resolveUpvalue(index-1, name);
-                    match upvalue{
-                        Some(val) => return Some(self.addUpvalue(index, val as usize, false)),
-                        None => return None
-                    }
-                } 
-            }
-        }
-  }
+    }
 
     fn addUpvalue(&mut self, compiler_index: usize,  index: usize, isLocal: bool ) -> u8{
         let comp = self.compilerStack.get_mut(compiler_index).unwrap();
@@ -686,9 +679,20 @@ impl Parser{
             self.errorAt("Too many closure variables in function".to_string(), ErrorTokenLoc::PREVIOUS);
             return 0;
         }
-        comp.upvalues.push(Rc::new(RefCell::new(Upvalue::Open(UpvalueIndex::new(index, isLocal))  )));
+        let v = Upvalue::Open(UpvalueIndex{index, isLocal}); 
+        comp.upvalues.push(Rc::new(RefCell::new(v)));
+        println!("Total Upvalues {}", comp.upvalues.len());
+        let _ = comp.upvalues.clone().into_iter().map(|x| {
+            let a = x.borrow();
+            match *a {
+                Upvalue::Open(idx) => {
+                    println!("CompilerIndex {} index {} Local {}", compiler_index, idx.index, idx.isLocal);
+                }
+                Upvalue::Closed(_) => panic!()
+            }
+        });
         comp.function.upvalueCount = comp.upvalues.len();
-        return comp.upvalues.len() as u8
+        return comp.function.upvalueCount as u8-1 
    }
     
 // the function that handles precedence and allows recursion to occur
@@ -987,11 +991,11 @@ impl Parser{
                 }
                 _ => panic!()
               }
-            }
-            for i in 0..isLocalVec.len(){
-                self.emitByte(isLocalVec[i]);
-                self.emitByte(IndexVec[i]);
-            }
+        }
+        for i in 0..isLocalVec.len(){
+            self.emitByte(isLocalVec[i]);
+            self.emitByte(IndexVec[i]);
+        }
     }
 
     fn beginScope(&mut self){

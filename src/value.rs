@@ -22,12 +22,6 @@ pub struct UpvalueIndex{
     pub isLocal: bool
 }
 
-impl UpvalueIndex{
-    pub fn new(nindex: usize, nisLocal: bool) -> Self{
-        UpvalueIndex{index:nindex, isLocal: nisLocal}
-    }
-}
-
 #[derive(Clone)]
 pub enum Upvalue{
     Open(UpvalueIndex),
@@ -125,7 +119,7 @@ impl Value {
             },
             Value::VAL_NUMBER(num) => print!("{:<.5}", num),
             Value::VAL_STRING(name) => print!("{}", name.name),
-            Value::VAL_FUNCTION(func) => print!("{}", func.name.name),
+            Value::VAL_FUNCTION(func) => print!("<fn {}>", func.name.name),
             Value::VAL_NATIVE(_) => print!("<native fn>"),
             Value::VAL_CLOSURE(closure) => { print!("{}",closure.function.name.name)},
             Value::VAL_UPVALUE(_) => print!("upvalue")

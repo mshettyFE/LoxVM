@@ -437,7 +437,7 @@ impl VM {
                 return upval.clone()
             }
         }
-        return Rc::new(RefCell::new(Upvalue::Open(UpvalueIndex::new(index, true))));
+        return Rc::new(RefCell::new(Upvalue::Open(UpvalueIndex{index, isLocal: true} )));
     }
 
     fn closeUpvalue(&mut self, index: usize){

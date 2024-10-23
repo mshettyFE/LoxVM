@@ -103,7 +103,7 @@ impl Chunk {
                     OpCode::OP_PRINT => self.simple_instruction("OP_PRINT".to_string(), offset)?,
                     OpCode::OP_CALL => self.byte_instruction("OP_CALL".to_string(), offset)?,
                     OpCode::OP_CLOSURE => {
-                        let mut cur_offset = offset;             
+                        let mut cur_offset = offset; 
                         cur_offset += 1;
                         let constant = self.code.get(cur_offset).unwrap();
                         cur_offset += 1;
@@ -118,7 +118,8 @@ impl Chunk {
                                     cur_offset += 1;
                                     let index = self.get_instr(cur_offset).unwrap();
                                     cur_offset += 1;
-                                    println!("{:4}    |     {} {}", cur_offset-2, local_name, index);
+                                    let v = self.get_constant(*index as usize).unwrap();
+                                    println!("{:04}    |     {} {}", cur_offset-2, local_name, index);
                                 } 
                             },
                             _ => panic!()
