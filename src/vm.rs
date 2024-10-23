@@ -140,11 +140,12 @@ impl VM {
                             let new_upvalue = match isLocal{
                                 1 => {
                                     let new_index = self.getCurrentFrame().starting_index+index as usize;
-                                    Rc::new(RefCell::new(self.captureUpvalue(new_index)))
+                                    self.captureUpvalue(new_index)
                                 },
                                 0 => self.getCurrentFrame().closure.upvalues[index as usize].clone(),
                                 _ => panic!()
                             };
+                            self.upvalues.push(new_upvalue.clone());
                             new_upvalues.push(new_upvalue);
                         }
                         let new_c = Value::VAL_CLOSURE(LoxClosure{function: func, upvalues:  new_upvalues });
@@ -156,7 +157,7 @@ impl VM {
                    let upvalue_copy = self.getCurrentFrame().closure.upvalues[slot as usize-1].borrow().clone();
                    match upvalue_copy{
                      Upvalue::Open(idx) => self.stk.push(self.stk.get(idx.index).unwrap()),
-                     _ => panic!()
+                     Upvalue::Closed(val) => self.stk.push(*val.clone())
                    }
               },
                OpCode::OP_SET_UPVALUE => {
@@ -164,14 +165,23 @@ impl VM {
                    match self.stk.peek(0){
                         Some(val) => {
                             if let Value::VAL_UPVALUE(up_val) = val{
-                                self.getCurrentFrame().closure.upvalues[slot as usize] = Rc::new(RefCell::new(up_val)); 
+                                self.getCurrentFrame().closure.upvalues[slot as usize-1] = up_val; 
                             } else {panic!()}
                         }
                         None => panic!()
                     }
               },
+              OpCode::OP_CLOSE_UPVALUE => {
+                  let idx = self.stk.size()-1;
+                  self.closeUpvalue(idx);
+                  self.stk.pop();
+              }
                 OpCode::OP_RETURN => { // return from function
                     let result = self.stk.pop();
+                    
+                    for idx in self.getCurrentFrame().starting_index..self.stk.size(){
+                        self.closeUpvalue(idx);
+                    }
                     // clean up the stack to until the current function call gets erased
                     let current_pointer = self.getCurrentFrame().starting_index;
                     while self.stk.size() > current_pointer{
@@ -421,8 +431,24 @@ impl VM {
         }
     }
 
-    fn captureUpvalue(&mut self, index: usize) -> Upvalue{
-        return Upvalue::Open(UpvalueIndex::new(index, true));
+    fn captureUpvalue(&mut self, index: usize) -> Rc<RefCell<Upvalue>>{
+        for upval in self.upvalues.iter().rev(){
+            if upval.borrow().is_open_with_index(index){
+                return upval.clone()
+            }
+        }
+        return Rc::new(RefCell::new(Upvalue::Open(UpvalueIndex::new(index, true))));
+    }
+
+    fn closeUpvalue(&mut self, index: usize){
+        let value = &self.stk.get(index).unwrap();
+        for upval in &self.upvalues{
+            if upval.borrow().is_open_with_index(index) {
+                upval.replace(Upvalue::Closed(Box::new(value.clone())));
+            }
+        }
+
+        self.upvalues.retain(|u| u.borrow().is_open());
     }
 
     fn Call(&mut self, closure: LoxClosure , argCount: u8) -> Result<(),String>{

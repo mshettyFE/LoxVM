@@ -34,6 +34,22 @@ pub enum Upvalue{
     Closed(Box<Value>)
 }
 
+impl Upvalue{
+    pub fn is_open(&self) -> bool{
+        match self{
+            Upvalue::Open(_) => true,
+            _ => false
+        }
+    }
+
+    pub fn is_open_with_index(&self, index: usize) -> bool{
+        match self{
+            Upvalue::Open(idx) => return idx.index == index,
+            Upvalue::Closed(_) => false
+        }
+    }
+}
+
 #[derive(Clone, PartialEq)]
 pub struct LoxString{
     pub name: String,
@@ -89,7 +105,7 @@ pub enum Value {
     VAL_FUNCTION(LoxFunction),
     VAL_NATIVE(NativeFn),
     VAL_CLOSURE(LoxClosure),
-    VAL_UPVALUE(Upvalue)
+    VAL_UPVALUE(Rc<RefCell<Upvalue>>)
 }
 
 impl std::fmt::Debug for Value{

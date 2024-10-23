@@ -22,7 +22,6 @@ pub struct Compiler {
     pub function: LoxFunction, // what function the compiler is currently trying to check
     ftype: FunctionType, // tells you if the current function is main
     locals: Vec<Locals>, // a stack of local variables that are accessible in the current scope
-    localCount: u64, // a count of the number of variables accessible in the current scope
     scopeDepth: u64, // the current scope
     upvalues: Vec<Rc<RefCell<Upvalue>>>  // upvalues needed by function
 }
@@ -36,7 +35,6 @@ impl Compiler {
                     function: LoxFunction::new(0, fname),
                     ftype: new_ftype,
                     locals: Vec::new(),
-                    localCount: 0,
                     scopeDepth: 0,
                     upvalues: Vec::new()
                 }
@@ -47,7 +45,6 @@ impl Compiler {
                     function: LoxFunction::new(0, LoxString::new("script".to_string())),
                     ftype: new_ftype,
                     locals: Vec::new(),
-                    localCount: 0,
                     scopeDepth: 0,
                     upvalues: Vec::new()
                 }
@@ -68,7 +65,7 @@ impl Compiler {
         if self.scopeDepth == 0 {return}
         // utilized to prevent self-initialization (ie. var a = a; type of thing).
         // Use option as a sentinel value
-        self.locals.get_mut((self.localCount) as usize -1).unwrap().depth = 
+        self.locals.last_mut().unwrap().depth = 
             Some(self.scopeDepth);
     }
 }
@@ -77,11 +74,12 @@ impl Compiler {
 pub struct Locals {
     pub name: Token, // name of variable
     pub depth: Option<u64>, // scope of local
+    pub isCaptured: bool    // weather a local variable gets captured
 }
 
 impl Locals {
     pub fn new(new_name: Token, new_depth: Option<u64>) -> Self{
-        Locals{name: new_name, depth: new_depth}
+        Locals{name: new_name, depth: new_depth, isCaptured: false}
     }
 }
 
@@ -330,26 +328,9 @@ impl Parser{
         else if self.Match(scanner, TokenType::TOKEN_LEFT_BRACE){
             // Blocks are slightly more involved
             // You need to wrap the block in it's own scope
-            self.compilerStack.last_mut().unwrap().beginScope();
+            self.beginScope();
             self.block(scanner);
-            self.compilerStack.last_mut().unwrap().endScope();
-            loop {
-                // Once the block is done, you need to pop off all of the local variables which
-                // where generated in the block
-                if self.compilerStack.last_mut().unwrap().localCount == 0 {
-                    break;
-                }
-                let cur_comp = self.compilerStack.last_mut().unwrap();
-                // you get rid of all variables whose depth is greater than that of the current
-                // scope depth
-                let var_depth = cur_comp.locals.get( (cur_comp.localCount-1) as usize ).unwrap().depth;
-                if var_depth.unwrap() > self.compilerStack.last_mut().unwrap().scopeDepth {
-                    self.emitByte(OpCode::OP_POP as u8);
-                    self.compilerStack.last_mut().unwrap().localCount -= 1;
-                    continue;
-                }
-                break;
-            }
+           self.endScope();
         }
         else {
             self.expressionStatement(scanner);
@@ -409,7 +390,7 @@ impl Parser{
         //                   expression? ";"
         //                   expression? ")" statement 
         //  for statement has it's own scope. Done here to include looping variables in scope
-        self.compilerStack.last_mut().unwrap().beginScope(); 
+        self.beginScope(); 
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'for'.".to_string(), scanner);
         // parsing initialization condition
         if self.Match(scanner, TokenType::TOKEN_SEMICOLON){}
@@ -464,7 +445,7 @@ impl Parser{
         }
 
         // for loops close scoping once done
-        self.compilerStack.last_mut().unwrap().endScope();
+        self.endScope();
 
     }
 
@@ -499,6 +480,7 @@ impl Parser{
             // otherwise, can return top of stack
             self.expression(scanner);
             self.consume(TokenType::TOKEN_SEMICOLON, "Expect ';' after return value".to_string(), scanner);
+//            println!("DIRECT LINE RETURN {}", self.previous.line );
             self.emitByte(OpCode::OP_RETURN as u8);
         }
     }
@@ -644,12 +626,13 @@ impl Parser{
     fn resolveLocal(&mut self,compiler_stack_index: usize, name: Token) -> Option<u8>{
         // walk up the compiler stack until you hit the top or you find a variable with the
         // semantically matching name
-        let mut index: isize =  (self.compilerStack.get_mut(compiler_stack_index).unwrap().localCount as isize) -1;
+        let cur_comp = self.compilerStack.get_mut(compiler_stack_index).unwrap();
+        let mut index: isize =  (cur_comp.locals.len() as isize) -1;
         loop {
             if index < 0 {
                 break;
             }
-            let local = self.compilerStack.get_mut(compiler_stack_index).unwrap().locals.get(index as usize).unwrap();
+            let local = cur_comp.locals.get(index as usize).unwrap();
             if local.name.EqualSemantically(name.clone()) {
                 if local.depth.is_none() {
                     // prevent self initialization
@@ -664,25 +647,28 @@ impl Parser{
 
     fn resolveUpvalue(&mut self, index: usize, name: Token) -> Option<u8> {
         match  self.compilerStack.get_mut(index){
-            Some(_comp) => (),
+            Some(_comp) => {},
             None => return None
         }
         match index{
             0 => return None,
             _ => match self.resolveLocal(index-1, name.clone()){
-                Some(local) => return Some(self.addUpvalue(index, local as usize, true)),
-                None => () 
+                Some(local) =>{
+                    let enclosing = self.compilerStack.get_mut(index-1).unwrap();
+                    enclosing.locals[local as usize].isCaptured = true;
+                    return Some(self.addUpvalue(index, local as usize, true))
+                },
+                None => {
+                    if index == 0 {return None}
+                    let upvalue = self.resolveUpvalue(index-1, name);
+                    match upvalue{
+                        Some(val) => return Some(self.addUpvalue(index, val as usize, false)),
+                        None => return None
+                    }
+                } 
             }
         }
-        let upvalue = match index{
-                0 => return None,
-                _ => self.resolveUpvalue( index-1, name)
-        };
-        match upvalue{
-                Some(val) =>return Some(self.addUpvalue(index, val as usize, false)),
-                None => return None
-        }
-   }
+  }
 
     fn addUpvalue(&mut self, compiler_index: usize,  index: usize, isLocal: bool ) -> u8{
         let comp = self.compilerStack.get_mut(compiler_index).unwrap();
@@ -786,7 +772,7 @@ impl Parser{
         if self.compilerStack.last_mut().unwrap().scopeDepth  == 0 {return ;}
         let sd = self.compilerStack.last_mut().unwrap().scopeDepth;
         let new_local: Locals = Locals::new(self.previous.clone(), Some(self.compilerStack.last_mut().unwrap().scopeDepth));
-        for index in  (0..self.compilerStack.last_mut().unwrap().localCount).rev(){
+        for index in  (0..self.compilerStack.last_mut().unwrap().locals.len()).rev(){
             let local = self.compilerStack.last_mut().unwrap().locals.get(index as usize).unwrap();
             if local.depth.unwrap() < sd{
                 break;
@@ -801,7 +787,6 @@ impl Parser{
     fn addLocal(&mut self, mut new_local: Locals){
         // add local variable to current compiler
         new_local.depth = None;
-        self.compilerStack.last_mut().unwrap().localCount += 1;
         self.compilerStack.last_mut().unwrap().locals.push(new_local);
     }
 
@@ -850,6 +835,7 @@ impl Parser{
     }
 
     fn emitReturn(&mut self) {
+//        println!("INDIRECT LINE RETURN {}", self.previous.line );
         // you emit a OP_NIL since you need to cover the case where nothing gets returned
         self.emitByte(OpCode::OP_NIL as u8);
         self.emitByte(OpCode::OP_RETURN as u8);
@@ -957,7 +943,7 @@ impl Parser{
 
         // Entering a new function means you need a new compiler
         self.compilerStack.push(Compiler::new(ftype, LoxString::new(self.previous.start.clone())));
-        self.compilerStack.last_mut().unwrap().beginScope();
+        self.beginScope();
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after function name.".to_string(), scanner);
         // You parse arguments of the function, checking to make sure that you don't have a
         // stupidly large number of args and that each argument is a valid variable
@@ -980,6 +966,8 @@ impl Parser{
 
         // block consumes '}', so don't worry about that
         self.block(scanner);
+        self.endScope();
+
 
         // Return from the function an store value on stack
         let comp = self.endParser().unwrap();
@@ -1004,6 +992,36 @@ impl Parser{
                 self.emitByte(isLocalVec[i]);
                 self.emitByte(IndexVec[i]);
             }
+    }
+
+    fn beginScope(&mut self){
+        self.compilerStack.last_mut().unwrap().beginScope();
+    }
+
+    fn endScope(&mut self){
+        self.compilerStack.last_mut().unwrap().endScope();
+        loop {
+                // Once the block is done, you need to pop off all of the local variables which
+                // where generated in the block
+
+                let cur_comp = self.compilerStack.last().unwrap();
+                if cur_comp.locals.len() == 0 {
+                    break;
+                }
+                // you get rid of all variables whose depth is greater than that of the current
+                // scope depth
+                let var_depth = cur_comp.locals.last().unwrap().depth.unwrap();
+                if var_depth > cur_comp.scopeDepth {
+                    if cur_comp.locals.last().unwrap().isCaptured{
+                        self.emitByte(OpCode::OP_CLOSE_UPVALUE as u8);
+                    } else {
+                        self.emitByte(OpCode::OP_POP as u8);
+                    }
+                    self.compilerStack.last_mut().unwrap().locals.pop();
+                    continue;
+                }
+                break;
+        } 
     }
 
     fn endParser(&mut self) -> Option<Compiler>{
