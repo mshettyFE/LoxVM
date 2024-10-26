@@ -474,7 +474,7 @@ impl Parser{
             self.errorAt("Can't return from top-level code;".to_string(), ErrorTokenLoc::PREVIOUS);
         }
         //Can return a nill value like: return ;
-        if (self.Match(scanner, TokenType::TOKEN_SEMICOLON)){
+        if self.Match(scanner, TokenType::TOKEN_SEMICOLON) {
             self.emitReturn();
         } else {
             // otherwise, can return top of stack
@@ -674,7 +674,7 @@ impl Parser{
                 Upvalue::Closed(_) => panic!()
             }
        }
-        if (comp.upvalues.len()+1 >= 255){
+        if comp.upvalues.len()+1 >= 255 {
             self.errorAt("Too many closure variables in function".to_string(), ErrorTokenLoc::PREVIOUS);
             return 0;
         }
@@ -1035,7 +1035,7 @@ impl Parser{
     fn argumentList(&mut self, scanner: &mut Scanner) -> u8{
         // parse arguments of function, checking for arity
         let mut argCount = 0;
-        if (!self.check(TokenType::TOKEN_RIGHT_PAREN)){
+        if !self.check(TokenType::TOKEN_RIGHT_PAREN) {
             loop{
                 self.expression(scanner);
                 if argCount == 255 {

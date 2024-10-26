@@ -118,7 +118,6 @@ impl Chunk {
                                     cur_offset += 1;
                                     let index = self.get_instr(cur_offset).unwrap();
                                     cur_offset += 1;
-                                    let v = self.get_constant(*index as usize).unwrap();
                                     println!("{:04}    |     {} {}", cur_offset-2, local_name, index);
                                 } 
                             },

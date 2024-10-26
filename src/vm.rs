@@ -126,7 +126,7 @@ impl VM {
                 },
                 OpCode::OP_CALL => { // execute the function
                     let argCount = self.read_byte().unwrap();
-                    match (self.callValue(self.stk.peek(argCount as usize).unwrap(), argCount)){
+                    match self.callValue(self.stk.peek(argCount as usize).unwrap(), argCount){
                         Err(str) => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str)))}
                         Ok(()) => {()}
                     }
@@ -192,7 +192,7 @@ impl VM {
                     // Pop from the call stack
                     self.frames.pop();
                     // If at the base, then you need to exit from the program
-                    if (self.frames.len() == 0){
+                    if self.frames.len() == 0 {
                         self.stk.pop(); // remove the stray NIL value from the stack
                         return InterpretResult::INTERPRET_OK
                     }
@@ -420,7 +420,7 @@ impl VM {
                         let fn_start = self.stk.size()- argCount as usize;
                         // execute the native function and  push the result onto the VM stack
                         let result = native_func(argCount as usize, fn_start);
-                        while (self.stk.size() > fn_start){
+                        while self.stk.size() > fn_start {
                             self.stk.pop();
                         }
                         self.stk.push(result);
@@ -449,7 +449,7 @@ impl VM {
         for upval in &self.upvalues{
             match upval.borrow().get_index(){
                 Some(cur_idx) => {
-                    if (cur_idx> index){
+                    if cur_idx> index {
                         break;
                     }
                 },
@@ -466,7 +466,7 @@ impl VM {
     fn Call(&mut self, closure: LoxClosure , argCount: u8) -> Result<(),String>{
         // This does runtime checking that the number of input arguments matches the arity of the
         // function
-        if(self.frames.len()+1 == 255){
+        if self.frames.len()+1 == 255 {
             return Err("Stack overflow.".to_string());
         }
             if argCount as usize != closure.function.arity {
@@ -510,7 +510,7 @@ impl VM {
         // stack trace
         let mut cur_frame = self.frames.len()-1;
         let mut stack_trace = "".to_string();
-        while cur_frame >= 0 {
+        loop {
             let frame =  self.frames.get_mut(cur_frame).unwrap();
             stack_trace = format!("{} [line {}] in {}\n", stack_trace, frame.closure.function.chunk.get_line(frame.ip).unwrap(), frame.closure.function.name.name);
             if cur_frame == 0 {break;}

@@ -134,7 +134,7 @@ impl Value {
     }
 
     pub fn get_type(&self) -> LoxType{
-        match(self){
+        match self{
             Value::VAL_NIL => LoxType::NIL,
             Value::VAL_BOOL(_) => LoxType::BOOL,
             Value::VAL_NUMBER(_) => LoxType::NUMBER,
