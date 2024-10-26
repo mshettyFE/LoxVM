@@ -480,7 +480,6 @@ impl Parser{
             // otherwise, can return top of stack
             self.expression(scanner);
             self.consume(TokenType::TOKEN_SEMICOLON, "Expect ';' after return value".to_string(), scanner);
-//            println!("DIRECT LINE RETURN {}", self.previous.line );
             self.emitByte(OpCode::OP_RETURN as u8);
         }
     }
@@ -681,17 +680,7 @@ impl Parser{
         }
         let v = Upvalue::Open(UpvalueIndex{index, isLocal}); 
         comp.upvalues.push(Rc::new(RefCell::new(v)));
-        println!("Total Upvalues {}", comp.upvalues.len());
-        let _ = comp.upvalues.clone().into_iter().map(|x| {
-            let a = x.borrow();
-            match *a {
-                Upvalue::Open(idx) => {
-                    println!("CompilerIndex {} index {} Local {}", compiler_index, idx.index, idx.isLocal);
-                }
-                Upvalue::Closed(_) => panic!()
-            }
-        });
-        comp.function.upvalueCount = comp.upvalues.len();
+       comp.function.upvalueCount = comp.upvalues.len();
         return comp.function.upvalueCount as u8-1 
    }
     
@@ -839,7 +828,6 @@ impl Parser{
     }
 
     fn emitReturn(&mut self) {
-//        println!("INDIRECT LINE RETURN {}", self.previous.line );
         // you emit a OP_NIL since you need to cover the case where nothing gets returned
         self.emitByte(OpCode::OP_NIL as u8);
         self.emitByte(OpCode::OP_RETURN as u8);

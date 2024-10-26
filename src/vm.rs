@@ -154,7 +154,7 @@ impl VM {
               },
                OpCode::OP_GET_UPVALUE => {
                    let slot = self.read_byte().unwrap();
-                   let upvalue_copy = self.getCurrentFrame().closure.upvalues[slot as usize-1].borrow().clone();
+                   let upvalue_copy = self.getCurrentFrame().closure.upvalues[slot as usize].borrow().clone();
                    match upvalue_copy{
                      Upvalue::Open(idx) => self.stk.push(self.stk.get(idx.index).unwrap()),
                      Upvalue::Closed(val) => self.stk.push(*val.clone())
@@ -162,13 +162,17 @@ impl VM {
               },
                OpCode::OP_SET_UPVALUE => {
                    let slot = self.read_byte().unwrap();
-                   match self.stk.peek(0){
-                        Some(val) => {
-                            if let Value::VAL_UPVALUE(up_val) = val{
-                                self.getCurrentFrame().closure.upvalues[slot as usize-1] = up_val; 
-                            } else {panic!()}
-                        }
+                   let val = match self.stk.peek(0){
+                        Some(v) => {
+                            v
+                       }
                         None => panic!()
+                    };
+
+                    let uv = self.getCurrentFrame().closure.upvalues[slot as usize].borrow().clone();
+                    match uv{
+                        Upvalue::Open(idx) => self.stk.set( idx.index+1, val),
+                        Upvalue::Closed(_) => self.getCurrentFrame().closure.upvalues[slot as usize] = Rc::new(RefCell::new(Upvalue::Closed(Box::new(val))))   
                     }
               },
               OpCode::OP_CLOSE_UPVALUE => {
@@ -178,10 +182,8 @@ impl VM {
               }
                 OpCode::OP_RETURN => { // return from function
                     let result = self.stk.pop();
-                    
-                    for idx in self.getCurrentFrame().starting_index..self.stk.size(){
-                        self.closeUpvalue(idx);
-                    }
+                    let idx = self.getCurrentFrame().starting_index;
+                    self.closeUpvalue(idx);
                     // clean up the stack to until the current function call gets erased
                     let current_pointer = self.getCurrentFrame().starting_index;
                     while self.stk.size() > current_pointer{
@@ -227,7 +229,6 @@ impl VM {
                         Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",err_msg))),
                     };
                     let index = self.getCurrentFrame().starting_index + slot as usize+1;
-//                    println!("ABS Index {}, starting {}, slot {}", index, cur_frame.starting_index, slot);
                     self.stk.set(index, self.stk.peek(0).unwrap());
                }
                OpCode::OP_GET_GLOBAL => { // get value of global variable from the global hash
@@ -441,8 +442,19 @@ impl VM {
     }
 
     fn closeUpvalue(&mut self, index: usize){
-        let value = &self.stk.get(index).unwrap();
+        let value = match self.stk.get(index+1){
+            Some(v) => v,
+            None => return 
+        };
         for upval in &self.upvalues{
+            match upval.borrow().get_index(){
+                Some(cur_idx) => {
+                    if (cur_idx> index){
+                        break;
+                    }
+                },
+                None => ()
+            }
             if upval.borrow().is_open_with_index(index) {
                 upval.replace(Upvalue::Closed(Box::new(value.clone())));
             }
@@ -525,7 +537,6 @@ impl VM {
         frame.ip += 2;
         let higher_byte = *frame.closure.function.chunk.get_instr(frame.ip-2).unwrap() as u16;
         let lower_byte = *frame.closure.function.chunk.get_instr(frame.ip-1).unwrap() as u16;
-//        println!("High {}, Low {}, IP {}", higher_byte, lower_byte, ip );
         return  (higher_byte << 8 ) | lower_byte;
     }
 

@@ -16,13 +16,13 @@ pub enum LoxType{
     UPVALUE
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct UpvalueIndex{
     pub index: usize,
     pub isLocal: bool
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Upvalue{
     Open(UpvalueIndex),
     Closed(Box<Value>)
@@ -33,6 +33,13 @@ impl Upvalue{
         match self{
             Upvalue::Open(_) => true,
             _ => false
+        }
+    }
+
+    pub fn get_index(&self) -> Option<usize>{
+        match self{
+            Upvalue::Open(idx) => {Some(idx.index)},
+            Upvalue::Closed(_) => None
         }
     }
 
