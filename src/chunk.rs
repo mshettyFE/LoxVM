@@ -1,24 +1,23 @@
 #![allow(non_camel_case_types)]
-
-use crate::value::Value;
+use crate::value::{LoxFunction, LoxString, Upvalue, Value};
 
 // Growing list of supported opcodes
-#[derive(FromPrimitive)]
+#[derive(Clone)]
 pub enum OpCode {
     // each entry corresponds to a single u8 unless noted otherwise
-    OP_CONSTANT,
+    OP_CONSTANT(usize),
     OP_NIL,
     OP_TRUE,
     OP_FALSE,
     OP_POP,
-    OP_GET_GLOBAL,
-    OP_GET_LOCAL,
+    OP_GET_GLOBAL(usize),
+    OP_GET_LOCAL(usize),
     OP_CLOSE_UPVALUE,
-    OP_GET_UPVALUE,
-    OP_SET_UPVALUE,
-    OP_DEFINE_GLOBAL,
-    OP_SET_GLOBAL,
-    OP_SET_LOCAL,
+    OP_GET_UPVALUE(usize),
+    OP_SET_UPVALUE(usize),
+    OP_DEFINE_GLOBAL(usize),
+    OP_SET_GLOBAL(usize),
+    OP_SET_LOCAL(usize),
     OP_ADD,
     OP_EQUAL,
     OP_GREATER,
@@ -29,18 +28,49 @@ pub enum OpCode {
     OP_NOT,
     OP_NEGATE,
     OP_PRINT,
-    OP_JUMP,
-    OP_JUMP_IF_FALSE,
-    OP_LOOP,
-    OP_CALL,
-    OP_CLOSURE,
+    OP_JUMP(usize),
+    OP_JUMP_IF_FALSE(usize),
+    OP_LOOP(usize),
+    OP_CALL(usize),
+    OP_CLOSURE(usize,Vec<Upvalue>),
     OP_RETURN,
+}
+
+impl OpCode{
+    pub fn length(&self) -> usize{
+        let out = match self{
+            OpCode::OP_CONSTANT(_) => 2,
+            OpCode::OP_GET_LOCAL(_) => 2,
+            OpCode::OP_SET_LOCAL(_) => 2,
+            OpCode::OP_GET_UPVALUE(_) => 2,
+            OpCode::OP_SET_UPVALUE(_) => 2,
+            OpCode::OP_DEFINE_GLOBAL(_) => 2,
+            OpCode::OP_GET_GLOBAL(_) => 2,
+            OpCode::OP_SET_GLOBAL(_) => 2,
+            OpCode::OP_JUMP(_) => 2,
+            OpCode::OP_JUMP_IF_FALSE(_) => 2,
+            OpCode::OP_LOOP(_) => 2,
+            OpCode::OP_CALL(_) => 2,
+            OpCode::OP_CLOSURE(_,upvalues ) => {
+                2+2*upvalues.len()
+            }
+            _ => 1
+        };
+        out
+    }
+}
+
+#[derive(Clone)]
+pub enum Constant{
+    NUMBER(f64),
+    STRING(String),
+    FUNCTION(LoxFunction),
 }
 
 #[derive(Clone)]
 pub struct Chunk {
-    code: Vec<u8>, // holds the byte code for the chunk
-    value_array: Vec<Value>, // hold the values of the chunk as floats
+    code: Vec<OpCode>, // holds the byte code for the chunk
+    value_array: Vec<Constant>, // hold the values of the chunk as floats
     lines: Vec<usize>, // for a given instruction, store the line where it was originated from
 }
 
@@ -49,28 +79,28 @@ impl Chunk {
         Chunk {code: Vec::new(), value_array: Vec::new(), lines: Vec::new()}
     }
 
-    pub fn write_chunk(&mut self, data: u8, line: usize){
+    pub fn write_chunk(&mut self, data: OpCode, line: usize){
         // add new data to  the chunk (not necessarily a single instruction. Could be part of an
         // instruction
         self.code.push(data);
         self.lines.push(line);
     }
 
-    pub fn edit_chunk(&mut self, index: usize, new_data: u8){
+    pub fn edit_chunk(&mut self, index: usize, new_data: OpCode){
         self.code[index] = new_data;
     }
 
-    pub fn get_instr(&self, index: usize) -> Option<&u8>{
+    pub fn get_instr(&self, index: usize) -> Option<&OpCode>{
         // grab the start of an instruction
         self.code.get(index)
     }
 
-    pub fn add_constant(&mut self, new_val: Value) ->usize{
+    pub fn add_constant(&mut self, new_val: Constant) ->usize{
         self.value_array.push(new_val);
-        return self.value_array.len()-1; // returns position of start of opcode (hopefully).
+        return self.value_array.len()-1;
     }
 
-    pub fn get_constant(&self, index: usize) -> Option<&Value>{
+    pub fn get_constant(&self, index: usize) -> Option<&Constant>{
         self.value_array.get(index)
     }
 
@@ -82,27 +112,24 @@ impl Chunk {
         self.lines.get(index)
     }
 
-  pub fn disassemble_instruction(&self, offset: usize) -> Result<usize, String>{
+  pub fn disassemble_instruction(&self, code_index: usize, chunk_location: usize) -> Result<(), String>{
     // disassembles the code at a particular index in the chunk
-    print!("{}",format!("{:04}",offset));
-    let found_opcode = self.code.get(offset);
+    print!("{}",format!("{:04}", chunk_location));
+    let found_opcode = self.code.get(code_index);
     match found_opcode { // check if offset is out of bounds
-        None => Err(format!("Couldn't access opcode at {}", offset)),
+        None => Err(format!("Couldn't access opcode at {}", code_index)),
         Some(opcode) => {
-            match offset { // we know that offset is not OOB. Just need to check if it's 0 or not
+            match code_index { // we know that offset is not OOB. Just need to check if it's 0 or not
                            // to determine line numbering
-                0 => print!("{}", format!("{:4} ", self.lines[offset])),
+                0 => print!("{}", format!("{:4} ", self.lines[code_index])),
                 _ => print!("{}",format!("    | ")),
             }
-            let oc = num::FromPrimitive::from_u8(*opcode);
-            match oc { // make sure that u8 conversion went well
-                // emite error if conversion failed, then continue
-                None => {print!("Unknown opcode at {}", offset); return Ok(offset+1);},
-                Some(instr) => {
-                let new_offset = match instr{ // dispatch to different output based on instr
-                    OpCode::OP_PRINT => self.simple_instruction("OP_PRINT".to_string(), offset)?,
-                    OpCode::OP_CALL => self.byte_instruction("OP_CALL".to_string(), offset)?,
-                    OpCode::OP_CLOSURE => {
+            match opcode { // make sure that u8 conversion went well
+                    OpCode::OP_PRINT => self.simple_instruction("OP_PRINT")?,
+                    OpCode::OP_CALL(index) => self.byte_instruction("OP_CALL", *index)?,
+                    OpCode::OP_CLOSURE(_,_) => {
+                        todo!();
+/*
                         let mut cur_offset = offset; 
                         cur_offset += 1;
                         let constant = self.code.get(cur_offset).unwrap();
@@ -124,97 +151,79 @@ impl Chunk {
                             _ => panic!()
                         }
                         return Ok(cur_offset);
-    
+*/    
                     },
-                    OpCode::OP_RETURN => self.simple_instruction("OP_RETURN".to_string(), offset)?,
-                    OpCode::OP_NIL => self.simple_instruction("OP_NIL".to_string(), offset)?,
-                    OpCode::OP_TRUE => self.simple_instruction("OP_TRUE".to_string(), offset)?,
-                    OpCode::OP_FALSE => self.simple_instruction("OP_FALSE".to_string(), offset)?,
-                    OpCode::OP_POP => self.simple_instruction("OP_POP".to_string(), offset)?,
-                    OpCode::OP_CLOSE_UPVALUE => self.simple_instruction("OP_CLOSE_UPVALUE".to_string(), offset)?,
-                    OpCode::OP_DEFINE_GLOBAL => self.constant_instruction("OP_DEFINE_GLOBAL".to_string(), offset)?,
-                    OpCode::OP_GET_GLOBAL => self.constant_instruction("OP_GET_GLOBAL".to_string(), offset)?,
-                    OpCode::OP_SET_GLOBAL => self.constant_instruction("OP_SET_GLOBAL".to_string(), offset)?,
-                    OpCode::OP_GET_LOCAL => self.byte_instruction("OP_GET_LOCAL".to_string(), offset)?,
-                    OpCode::OP_SET_LOCAL => self.byte_instruction("OP_SET_LOCAL".to_string(),offset)?,
-                    OpCode::OP_GET_UPVALUE => self.byte_instruction("OP_SET_UPVALUE".to_string(),offset)?,
-                    OpCode::OP_SET_UPVALUE => self.byte_instruction("OP_SET_UPVALUE".to_string(),offset)?,
-                    OpCode::OP_JUMP => self.jump_instruction("OP_JUMP".to_string(), true , offset)?,
-                    OpCode::OP_LOOP => self.jump_instruction("OP_LOOP".to_string(), false, offset)?,
-                    OpCode::OP_JUMP_IF_FALSE => self.jump_instruction("OP_JUMP_IF_FALSE".to_string(), true , offset)?,
-                    OpCode::OP_EQUAL => self.simple_instruction("OP_EQUAL".to_string(), offset)?,
-                    OpCode::OP_GREATER => self.simple_instruction("OP_GREATER".to_string(), offset)?,
-                    OpCode::OP_LESS => self.simple_instruction("OP_LESS".to_string(), offset)?,
-                    OpCode::OP_NEGATE => self.simple_instruction("OP_NEGATE".to_string(), offset)?,
-                    OpCode::OP_CONSTANT => self.constant_instruction("OP_CONSTANT".to_string(), offset)?,
-                    OpCode::OP_ADD => self.simple_instruction("OP_ADD".to_string(), offset)?,
-                    OpCode::OP_SUBTRACT => self.simple_instruction("OP_SUBTRACT".to_string(), offset)?,
-                    OpCode::OP_MULTIPLY => self.simple_instruction("OP_MULTIPLY".to_string(), offset)?,
-                    OpCode::OP_DIVIDE => self.simple_instruction("OP_DIVIDE".to_string(), offset)?,
-                    OpCode::OP_NOT => self.simple_instruction("OP_NOT".to_string(), offset)?,
-                };
-                return Ok(new_offset);
+                    OpCode::OP_RETURN => self.simple_instruction("OP_RETURN")?,
+                    OpCode::OP_NIL => self.simple_instruction("OP_NIL")?,
+                    OpCode::OP_TRUE => self.simple_instruction("OP_TRUE")?,
+                    OpCode::OP_FALSE => self.simple_instruction("OP_FALSE")?,
+                    OpCode::OP_POP => self.simple_instruction("OP_POP")?,
+                    OpCode::OP_CLOSE_UPVALUE => self.simple_instruction("OP_CLOSE_UPVALUE")?,
+                    OpCode::OP_DEFINE_GLOBAL(index) => self.constant_instruction("OP_DEFINE_GLOBAL", *index)?,
+                    OpCode::OP_GET_GLOBAL(index) => self.constant_instruction("OP_GET_GLOBAL", *index)?,
+                    OpCode::OP_SET_GLOBAL(index) => self.constant_instruction("OP_SET_GLOBAL", *index)?,
+                    OpCode::OP_GET_LOCAL(index) => self.byte_instruction("OP_GET_LOCAL", *index )?,
+                    OpCode::OP_SET_LOCAL(index) => self.byte_instruction("OP_SET_LOCAL", *index )?,
+                    OpCode::OP_GET_UPVALUE(index) => self.byte_instruction("OP_SET_UPVALUE", *index)?,
+                    OpCode::OP_SET_UPVALUE(index) => self.byte_instruction("OP_SET_UPVALUE", *index)?,
+                    OpCode::OP_JUMP(jump_length) => self.jump_instruction("OP_JUMP", true , *jump_length, chunk_location)?,
+                    OpCode::OP_LOOP(jump_length) => self.jump_instruction("OP_LOOP", false, *jump_length, chunk_location)?,
+                    OpCode::OP_JUMP_IF_FALSE(jump_length) => self.jump_instruction("OP_JUMP_IF_FALSE", true , *jump_length, chunk_location)?,
+                    OpCode::OP_EQUAL => self.simple_instruction("OP_EQUAL")?,
+                    OpCode::OP_GREATER => self.simple_instruction("OP_GREATER")?,
+                    OpCode::OP_LESS => self.simple_instruction("OP_LESS")?,
+                    OpCode::OP_NEGATE => self.simple_instruction("OP_NEGATE")?,
+                    OpCode::OP_CONSTANT(index) => self.constant_instruction("OP_CONSTANT", *index)?,
+                    OpCode::OP_ADD => self.simple_instruction("OP_ADD")?,
+                    OpCode::OP_SUBTRACT => self.simple_instruction("OP_SUBTRACT")?,
+                    OpCode::OP_MULTIPLY => self.simple_instruction("OP_MULTIPLY")?,
+                    OpCode::OP_DIVIDE => self.simple_instruction("OP_DIVIDE")?,
+                    OpCode::OP_NOT => self.simple_instruction("OP_NOT")?,
+                }
+                return Ok(());
                 }
             }
         }
-    }
-  }
 
-  fn simple_instruction(&self, name: String, offset: usize) -> Result<usize,String>{
+  fn simple_instruction(&self, name: &str) -> Result<(),String>{
     // format: Just the opcode
     println!(" {}", name);
-    return Ok(offset+1);
+    return Ok(())
   }
 
-  fn constant_instruction(&self, name: String, offset: usize) -> Result<usize,String> {
+  fn constant_instruction(&self, name: &str, constant_index: usize) -> Result<(),String> {
     // format: OPCODE at offset, and then immediately afterwards, the index in the ValueArray
     // corresponding to the constant
-    let constant_index = self.code.get(offset+1);
-    match constant_index {
-        None => {
-            println!("Trying to access {} outside of code range", offset+1);
-            return Ok(offset+1);
-        },
-        Some(const_index) => {
-            match self.value_array.get(*const_index as usize) {
-                None =>  return Err(format!("Trying to access {} outside of value range", *const_index)),
+            match self.value_array.get(constant_index) {
+                None =>  return Err(format!("Trying to access {} outside of value range", constant_index)),
                 Some (value) =>{
-                    print!("{}", format!("{:<16} {:4} '", name, *const_index));
-                    value.print_value();
+                    print!("{}", format!("{:<16} {:4} '", name, constant_index));
+                    match value{
+                        Constant::NUMBER(num) => print!("{}", num),
+                        Constant::STRING(str) => print!("{}", str),
+                        Constant::FUNCTION(func) => print!("{}", func.name.name)
+                    }
                     print!("'\n");
-                    return Ok(offset +2); // jump to after end of OP_CONSTANT
+                    return Ok(()); // jump to after end of OP_CONSTANT
                 }
             }
-        }
-    }
   }
 
-  fn jump_instruction(&self, name: String, sign: bool, offset: usize) -> Result<usize, String>{
+  fn jump_instruction(&self, name: &str, sign: bool, jump: usize, initial_chunk_loc: usize) -> Result<(), String>{
       // format: name, offset, offset_to_jump_to
-      let high_byte: u16 = (*self.code.get(offset+1).unwrap()  as u16) << (8 as u16);
-      let low_byte: u16 = *self.code.get(offset+2).unwrap()  as u16;
-      let jump: u16 = high_byte | low_byte;
-      let s: isize = match sign {
+     let s: isize = match sign {
             true => 1,
             false => -1
       };
       let jump_offset = s * (jump as isize);
-      let val: usize = (offset as i64 + 3 + (jump_offset as i64)) as usize;
-      println!("{} {} {}", name,offset, val);
-      Ok(offset +3)
+      println!("{} {} {}", name, initial_chunk_loc, initial_chunk_loc as isize + jump_offset);
+      Ok(())
   }
 
-  fn byte_instruction(&self, name: String, offset: usize) -> Result<usize, String>{
+  fn byte_instruction(&self, name: &str, value_index: usize) -> Result<(), String>{
     // format: OPCODE name value
-    let slot = match self.code.get(offset+1){
-        Some(val) => val,
-        None => {
-            println!("Trying to access {} outside of code range", offset+1);
-            return Ok(offset+1);
-        } 
-    };
-    println!("{} {}", name, slot);
-    return Ok(offset +2);
+    println!("{} {}", name, value_index);
+    return Ok(());
   }
 
   pub fn disassemble(&self, name: String) -> Result<(), String>{
@@ -222,8 +231,12 @@ impl Chunk {
     println!("== {} ==", name);
 
     let mut offset: usize = 0;
+    let mut lox_ref: usize = 0;
     while offset < self.get_count() {
-        offset = self.disassemble_instruction(offset)?;
+//        self.disassemble_instruction(offset, lox_ref);
+        self.disassemble_instruction(offset, offset);
+        lox_ref += self.code.get(offset).unwrap().length();
+        offset += 1;
     }
     Ok(())
   }

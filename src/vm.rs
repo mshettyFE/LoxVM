@@ -23,11 +23,12 @@ pub struct CallFrame{
                          // function, which has no relationship to other functions due to how the
                          // call stack is structured)
     pub starting_index: usize, // initial index into vm stack for this function
+    pub lox_index: usize
 }
 
 impl CallFrame {
     pub fn new(cls: LoxClosure, new_starting_index: usize) -> Self{
-        CallFrame{closure: cls, ip: 0, starting_index: new_starting_index} 
+        CallFrame{closure: cls, ip: 0, starting_index: new_starting_index, lox_index: 0} 
     }
 }
 
@@ -82,23 +83,22 @@ impl VM {
 
     fn run(&mut self) -> InterpretResult {
         loop {
-             if *DEBUG_TRACE_EXEC.get().unwrap(){
-               self.stk.print();
-               let frame = self.getCurrentFrame();
-               let _ = frame.closure.function.chunk.disassemble_instruction(frame.ip); 
-             }
              // get current instruction to run in the current chunk
-             let instruction_number  = match self.read_byte(){
+             let instruction  = match self.read_byte(){
                 Ok(val) => val,
                 Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",err_msg))),
              };
-           // try and convert current byte to an opcode
-             let cand_opcode: Option<OpCode> = num::FromPrimitive::from_u8(instruction_number);
-             let opcode = match cand_opcode {
-                 Some(val) => val,
-                None => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Invalid conversion  to OpCode attempted: {}", instruction_number))),       
-            };
-            match opcode { //finally, dispatch to the correct opcode
+              if *DEBUG_TRACE_EXEC.get().unwrap(){
+               self.stk.print();
+               let frame = self.getCurrentFrame();
+                //println!("{}", frame.ip);
+               frame.closure.function.chunk.disassemble_instruction(frame.ip-1, frame.ip-1).unwrap();
+             }
+            {
+                let frame = self.getCurrentFrame();
+                frame.lox_index += instruction.length();
+             }
+              match instruction { //finally, dispatch to the correct opcode
                 OpCode::OP_PRINT => {
                     match self.stk.pop(){
                         Some(v) => {
@@ -108,30 +108,26 @@ impl VM {
                         None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Stack is empty")))}
                      }
                  }
-                OpCode::OP_LOOP => {
-                    let offset = self.read_short(); // How many addresses back do we need to jump
-                                                    // backwards
-                    self.getCurrentFrame().ip -= offset as usize;
+                OpCode::OP_LOOP(offset) => {
+                    self.getCurrentFrame().ip -= (offset+1);
                 }
-                OpCode::OP_JUMP =>{ // unconditional jump
-                    let offset = self.read_short(); // How many addresses do we need to jump ahead
-                    self.getCurrentFrame().ip += offset as usize;
+                OpCode::OP_JUMP(offset) =>{ // unconditional jump
+                    self.getCurrentFrame().ip += offset-1;
                 }
-                OpCode::OP_JUMP_IF_FALSE => {
-                    let offset = self.read_short();
-                    if isFalsey(self.stk.peek(0).unwrap()) { // If top of stack if false, jump
-                                                             // ahead
-                        self.getCurrentFrame().ip += offset as usize;
+                OpCode::OP_JUMP_IF_FALSE(offset) => {
+                    if isFalsey(self.stk.peek(0).unwrap()) { // If top of stack if false, jump ahead
+                        self.getCurrentFrame().ip += offset-1;
                     }
                 },
-                OpCode::OP_CALL => { // execute the function
-                    let argCount = self.read_byte().unwrap();
-                    match self.callValue(self.stk.peek(argCount as usize).unwrap(), argCount){
+                OpCode::OP_CALL(argCount) => { // execute the function
+                    match self.callValue(self.stk.peek(argCount).unwrap(), argCount){
                         Err(str) => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str)))}
                         Ok(()) => {()}
                     }
                 },
-                OpCode::OP_CLOSURE => {
+                OpCode::OP_CLOSURE(_,_) => {
+                    todo!();
+/*
                     if let Value::VAL_FUNCTION(func) = self.read_constant(){
                         let mut new_upvalues: Vec<Rc<RefCell<Upvalue>>> = Vec::new();
                         for _ in 0..func.upvalueCount{
@@ -151,16 +147,22 @@ impl VM {
                         let new_c = Value::VAL_CLOSURE(LoxClosure{function: func, upvalues:  new_upvalues });
                         self.stk.push(new_c);
                     } else {panic!()}
+*/
               },
-               OpCode::OP_GET_UPVALUE => {
+               OpCode::OP_GET_UPVALUE(_) => {
+                   todo!()
+                    /*
                    let slot = self.read_byte().unwrap();
                    let upvalue_copy = self.getCurrentFrame().closure.upvalues[slot as usize].borrow().clone();
                    match upvalue_copy{
                      Upvalue::Open(idx) => self.stk.push(self.stk.get(idx.index).unwrap()),
                      Upvalue::Closed(val) => self.stk.push(*val.clone())
                    }
+                */
               },
-               OpCode::OP_SET_UPVALUE => {
+               OpCode::OP_SET_UPVALUE(_) => {
+                   todo!();
+                   /*
                    let slot = self.read_byte().unwrap();
                    let val = match self.stk.peek(0){
                         Some(v) => {
@@ -174,12 +176,11 @@ impl VM {
                         Upvalue::Open(idx) => self.stk.set( idx.index+1, val),
                         Upvalue::Closed(_) => self.getCurrentFrame().closure.upvalues[slot as usize] = Rc::new(RefCell::new(Upvalue::Closed(Box::new(val))))   
                     }
+                    */
               },
               OpCode::OP_CLOSE_UPVALUE => {
-                  let idx = self.stk.size()-1;
-                  self.closeUpvalue(idx);
-                  self.stk.pop();
-              }
+                  todo!();
+             }
                 OpCode::OP_RETURN => { // return from function
                     let result = self.stk.pop();
                     let idx = self.getCurrentFrame().starting_index;
@@ -199,8 +200,8 @@ impl VM {
                     // add the return value to the VM value stack
                     self.stk.push(result.unwrap());
                 },
-                OpCode::OP_CONSTANT => { // add constant to stack
-                  let constant: Value = self.read_constant();
+                OpCode::OP_CONSTANT(constant_index) => { // add constant to stack
+                  let constant: Value = self.read_constant(constant_index);
                  self.stk.push(constant.clone());
                },
                OpCode::OP_NIL => {
@@ -215,46 +216,33 @@ impl VM {
                OpCode::OP_POP => {
                     self.stk.pop();
                }
-               OpCode::OP_GET_LOCAL => { // get local variable, and push to stack
-                    let slot = match self.read_byte() {
-                        Ok(val) => val,
-                        Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",err_msg))),
-                    };
-                    let index = self.getCurrentFrame().starting_index + slot as usize +1;
+               OpCode::OP_GET_LOCAL(index) => { // get local variable, and push to stack
+                   let index = self.getCurrentFrame().starting_index + index +1;
                     self.stk.push(self.stk.get(index).unwrap());
                }
-               OpCode::OP_SET_LOCAL => { // get location of variable in stack, then update value
-                    let slot = match self.read_byte() {
-                        Ok(val) => val,
-                        Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",err_msg))),
-                    };
-                    let index = self.getCurrentFrame().starting_index + slot as usize+1;
+               OpCode::OP_SET_LOCAL(index) => { // get location of variable in stack, then update value
+                   let index = self.getCurrentFrame().starting_index + index +1;
                     self.stk.set(index, self.stk.peek(0).unwrap());
                }
-               OpCode::OP_GET_GLOBAL => { // get value of global variable from the global hash
+               OpCode::OP_GET_GLOBAL(name_index) => { // get value of global variable from the global hash
                                           // table
-                    let name: Value =  self.read_constant();
-                    let key: LoxString;
-                    match name {
-                        Value::VAL_STRING(new_key) => {
-                            key = new_key;
-                        }
-                        _ => {
-                            return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Should have gotten a LoxString...")));
-                        }
-                    }
-                    let wrapped_val = self.globals.find(key.clone());
+                    let slot = self.read_constant(name_index);
+                    let name = match slot {
+                        Value::VAL_STRING(n) => n,
+                        _ => panic!()
+                    };
+                   let wrapped_val = self.globals.find(name.clone());
                     match wrapped_val {
                         Some(value) => {
                             self.stk.push(value);
                         }
                         None => {
-                            return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Undefined variable {}.",key.name.clone())));
+                            return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Undefined variable {}.",name.name.clone())));
                         }
                      }
                }
-               OpCode::OP_DEFINE_GLOBAL => { // Creating a new global variable 
-                    let name: Value = self.read_constant();
+               OpCode::OP_DEFINE_GLOBAL(name_index) => { // Creating a new global variable 
+                    let name: Value = self.read_constant(name_index);
                     match name {
                         Value::VAL_STRING(str) => {
                                let value = self.stk.peek(0).unwrap();
@@ -265,8 +253,8 @@ impl VM {
                     } 
                     self.stk.pop();
                }
-               OpCode::OP_SET_GLOBAL => { // updating an existing variable
-                    let name: Value = self.read_constant();
+               OpCode::OP_SET_GLOBAL(name_index) => { // updating an existing variable
+                    let name: Value = self.read_constant(name_index);
                     match name {
                         Value::VAL_STRING(key) => {
                                let value = self.stk.peek(0).unwrap();
@@ -388,7 +376,7 @@ impl VM {
                        self.stk.pop();
                        if let Value::VAL_NUMBER(a_float) = a {
                             if let Value::VAL_NUMBER(b_float) = b{
-                               let output = match opcode {
+                               let output = match instruction {
                                     OpCode::OP_SUBTRACT => { b_float-a_float},
                                     OpCode::OP_MULTIPLY => b_float*a_float,
                                     OpCode::OP_DIVIDE => b_float/a_float,
@@ -409,7 +397,7 @@ impl VM {
         }
     }
 
-    fn callValue(&mut self, callee: Value, argCount: u8)-> Result<(),String>{
+    fn callValue(&mut self, callee: Value, argCount: usize)-> Result<(),String>{
         // This is a wrapper around Call. It does type checking on the input Value to make sure
         // it's a callable
         match callee {
@@ -463,7 +451,7 @@ impl VM {
         self.upvalues.retain(|u| u.borrow().is_open());
     }
 
-    fn Call(&mut self, closure: LoxClosure , argCount: u8) -> Result<(),String>{
+    fn Call(&mut self, closure: LoxClosure , argCount: usize) -> Result<(),String>{
         // This does runtime checking that the number of input arguments matches the arity of the
         // function
         if self.frames.len()+1 == 255 {
@@ -477,13 +465,13 @@ impl VM {
        return Ok(());
     } 
 
-    fn read_byte(&mut self) -> Result<u8, String> {
+    fn read_byte(&mut self) -> Result<OpCode, String> {
         // read one instruction from the current chunk
         // also advance ip by 1
         let f = self.getCurrentFrame();
 
         let output = match f.closure.function.chunk.get_instr(f.ip){
-                Some(val) => Ok(*val),
+                Some(val) => Ok(val.clone()),
                 None => {
                   let err_msg = format!("Out of bounds access of code: {}", f.ip);
                   Err(err_msg)
@@ -492,7 +480,17 @@ impl VM {
         f.ip += 1;
         return output;
     }
- 
+
+     fn read_constant(&mut self, index: usize) -> Value {
+        let frame = self.getCurrentFrame();
+        match frame.closure.function.chunk.get_constant(index as usize).expect("Out of bound error").clone(){
+           crate::chunk::Constant::NUMBER(num) => Value::VAL_NUMBER(num),
+           crate::chunk::Constant::STRING(str) => Value::VAL_STRING(LoxString::new(str)),
+           crate::chunk::Constant::FUNCTION(func) => Value::VAL_FUNCTION(func)
+        }
+    }
+
+
     fn formatRunTimeError(&mut self, formatted_message: fmt::Arguments) -> String{
         // pretty printing runtime errors
         let err_msg = format!("{}\n",formatted_message);
@@ -529,22 +527,6 @@ impl VM {
         self.globals.insert( name, self.stk.get(1).unwrap());
         self.stk.pop();
         self.stk.pop();
-    }
-
-    fn read_short(&mut self) -> u16{
-        // read the next two bytes in the chunk, incrementing the ip as needed
-        let frame = self.getCurrentFrame();
-        frame.ip += 2;
-        let higher_byte = *frame.closure.function.chunk.get_instr(frame.ip-2).unwrap() as u16;
-        let lower_byte = *frame.closure.function.chunk.get_instr(frame.ip-1).unwrap() as u16;
-        return  (higher_byte << 8 ) | lower_byte;
-    }
-
-    fn read_constant(&mut self) -> Value {
-        // read a value from the chunk and return the value. Don't mess with the stack
-        let index = self.read_byte().unwrap();
-        let frame = self.getCurrentFrame();
-        return frame.closure.function.chunk.get_constant(index as usize).expect("Out of bound error").clone();
     }
 
     fn getCurrentFrame(&mut self) -> &mut CallFrame{

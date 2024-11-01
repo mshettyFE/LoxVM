@@ -1,6 +1,6 @@
 #![allow(non_camel_case_types)]
 use crate::scanner::{Token, TokenType, Scanner};
-use crate::chunk::{Chunk, OpCode};
+use crate::chunk::{Chunk, Constant, OpCode};
 use crate::value::*;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -346,7 +346,7 @@ impl Parser{
         // This just parses an expression, but demands that there's a ; afterwards
         self.expression(scanner);
         self.consume(TokenType::TOKEN_SEMICOLON, "Expect ; after value.".to_string(), scanner);
-        self.emitByte(OpCode::OP_POP as u8);
+        self.emitByte(OpCode::OP_POP);
     }
 
     fn varDeclaration(&mut self, scanner: &mut Scanner,  ){
@@ -360,7 +360,7 @@ impl Parser{
         if self.Match(scanner, TokenType::TOKEN_EQUAL) {
             self.expression(scanner);
         } else {
-            self.emitByte(OpCode::OP_NIL as u8);
+            self.emitByte(OpCode::OP_NIL);
         }
         self.consume(TokenType::TOKEN_SEMICOLON, " Expect ';' after variable declaration.".to_string(), scanner);
         // Add the variable to the VM hashmap
@@ -382,7 +382,7 @@ impl Parser{
         // BNF: "print" expression ";"
         self.expression(scanner);
         self.consume(TokenType::TOKEN_SEMICOLON, "Expect ; after value.".to_string(), scanner);
-        self.emitByte(OpCode::OP_PRINT as u8);
+        self.emitByte(OpCode::OP_PRINT);
     }
 
     fn forStatement(&mut self, scanner: &mut Scanner){
@@ -413,18 +413,18 @@ impl Parser{
             self.expression(scanner);
             self.consume(TokenType::TOKEN_SEMICOLON, "Expect ';' after condition.".to_string(), scanner);
             
-            exitJump =  Some(self.emitJump(OpCode::OP_JUMP_IF_FALSE));
-            self.emitByte(OpCode::OP_POP as u8);
+            exitJump =  Some(self.emitJump(OpCode::OP_JUMP_IF_FALSE(0)));
+            self.emitByte(OpCode::OP_POP);
         } else{
             exitJump = None;
         }
         
         // check if there needs to be a body. If so, backpatch
         if  !self.Match(scanner, TokenType::TOKEN_RIGHT_PAREN) {
-            let bodyJump = self.emitJump(OpCode::OP_JUMP);
+            let bodyJump = self.emitJump(OpCode::OP_JUMP(0));
             let incrementStart = self.currentChunk().get_count();
             self.expression(scanner);
-            self.emitByte(OpCode::OP_POP as u8);
+            self.emitByte(OpCode::OP_POP);
             self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after 'for'.".to_string(), scanner);
 
             self.emitLoop(loopStart);
@@ -440,7 +440,7 @@ impl Parser{
         self.emitLoop(loopStart);
         // patching the exit condition
         match exitJump {
-            Some(offset) => {self.patchJump(offset); self.emitByte(OpCode::OP_POP as u8); ()}
+            Some(offset) => {self.patchJump(offset); self.emitByte(OpCode::OP_POP); ()}
             None => ()
         }
 
@@ -454,13 +454,13 @@ impl Parser{
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after 'if'.".to_string(), scanner);
         self.expression(scanner);
         self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect '(' after condition.".to_string(), scanner);
-        let thenJump: usize = self.emitJump(OpCode::OP_JUMP_IF_FALSE); 
-        self.emitByte(OpCode::OP_POP as u8);
+        let thenJump: usize = self.emitJump(OpCode::OP_JUMP_IF_FALSE(0)); 
+        self.emitByte(OpCode::OP_POP);
         self.statement(scanner);
         
-        let elseJump: usize = self.emitJump(OpCode::OP_JUMP);
+        let elseJump: usize = self.emitJump(OpCode::OP_JUMP(0));
         self.patchJump(thenJump);
-        self.emitByte(OpCode::OP_POP as u8);
+        self.emitByte(OpCode::OP_POP);
 
         if self.Match(scanner, TokenType::TOKEN_ELSE) {self.statement(scanner);}
 
@@ -480,7 +480,7 @@ impl Parser{
             // otherwise, can return top of stack
             self.expression(scanner);
             self.consume(TokenType::TOKEN_SEMICOLON, "Expect ';' after return value".to_string(), scanner);
-            self.emitByte(OpCode::OP_RETURN as u8);
+            self.emitByte(OpCode::OP_RETURN);
         }
     }
 
@@ -491,12 +491,12 @@ impl Parser{
         self.consume(TokenType::TOKEN_RIGHT_PAREN, "Expect ')' after 'while' expression.".to_string(), scanner);
        
         // more backpatching stuff
-        let exitJump = self.emitJump(OpCode::OP_JUMP_IF_FALSE);
-        self.emitByte(OpCode::OP_POP as u8);
+        let exitJump = self.emitJump(OpCode::OP_JUMP_IF_FALSE(0));
+        self.emitByte(OpCode::OP_POP);
         self.statement(scanner);
         self.emitLoop(loopStart);
         self.patchJump(exitJump);
-        self.emitByte(OpCode::OP_POP as u8);
+        self.emitByte(OpCode::OP_POP );
     }
 
     fn grouping(&mut self, scanner: &mut Scanner, _canAssign: bool){
@@ -508,7 +508,7 @@ impl Parser{
     fn call(&mut self, scanner: &mut Scanner, _canAssign: bool){
         // parse the arguments, and then emit call opcode
         let argCount = self.argumentList(scanner);
-        self.emitTwoBytes(OpCode::OP_CALL as u8, argCount);
+        self.emitByte(OpCode::OP_CALL(argCount as usize));
     }
 
     fn unary(&mut self, scanner: &mut Scanner, _canAssign: bool){
@@ -518,8 +518,8 @@ impl Parser{
         self.parsePrecedence(Precedence::PREC_UNARY, scanner);
         // after the fact, you apply the unary
         match operatorType {
-            TokenType::TOKEN_BANG => {self.emitByte(OpCode::OP_NOT as u8); () },
-            TokenType::TOKEN_MINUS => {self.emitByte(OpCode::OP_NEGATE as u8); ()},
+            TokenType::TOKEN_BANG => {self.emitByte(OpCode::OP_NOT ); () },
+            TokenType::TOKEN_MINUS => {self.emitByte(OpCode::OP_NEGATE ); ()},
             _ => (),
         }
     }
@@ -529,16 +529,16 @@ impl Parser{
         let rule = self.getRule(operatorType);
         self.parsePrecedence(rule.unwrap().precedence.decrease_prec().unwrap(), scanner);
         match operatorType {
-            TokenType::TOKEN_BANG_EQUAL => {self.emitTwoBytes(OpCode::OP_EQUAL as u8, OpCode::OP_NOT as u8); ()},
-            TokenType::TOKEN_EQUAL_EQUAL => {self.emitByte(OpCode::OP_EQUAL as u8); ()},
-            TokenType::TOKEN_GREATER => {self.emitByte(OpCode::OP_GREATER as u8); ()},
-            TokenType::TOKEN_GREATER_EQUAL => {self.emitTwoBytes(OpCode::OP_LESS as u8, OpCode::OP_NOT as u8); ()},
-            TokenType::TOKEN_LESS => {self.emitByte(OpCode::OP_LESS as u8); ()},
-            TokenType::TOKEN_LESS_EQUAL => {self.emitTwoBytes(OpCode::OP_GREATER as u8, OpCode::OP_NOT as u8); ()},
-            TokenType::TOKEN_PLUS => {self.emitByte(OpCode::OP_ADD as u8); ()},
-            TokenType::TOKEN_MINUS => {self.emitByte(OpCode::OP_SUBTRACT as u8); ()},
-            TokenType::TOKEN_STAR => {self.emitByte(OpCode::OP_MULTIPLY as u8); ()},
-            TokenType::TOKEN_SLASH => {self.emitByte(OpCode::OP_DIVIDE as u8); ()},
+            TokenType::TOKEN_BANG_EQUAL => {self.emitTwoBytes(OpCode::OP_EQUAL , OpCode::OP_NOT ); ()},
+            TokenType::TOKEN_EQUAL_EQUAL => {self.emitByte(OpCode::OP_EQUAL ); ()},
+            TokenType::TOKEN_GREATER => {self.emitByte(OpCode::OP_GREATER ); ()},
+            TokenType::TOKEN_GREATER_EQUAL => {self.emitTwoBytes(OpCode::OP_LESS , OpCode::OP_NOT ); ()},
+            TokenType::TOKEN_LESS => {self.emitByte(OpCode::OP_LESS ); ()},
+            TokenType::TOKEN_LESS_EQUAL => {self.emitTwoBytes(OpCode::OP_GREATER , OpCode::OP_NOT ); ()},
+            TokenType::TOKEN_PLUS => {self.emitByte(OpCode::OP_ADD ); ()},
+            TokenType::TOKEN_MINUS => {self.emitByte(OpCode::OP_SUBTRACT ); ()},
+            TokenType::TOKEN_STAR => {self.emitByte(OpCode::OP_MULTIPLY ); ()},
+            TokenType::TOKEN_SLASH => {self.emitByte(OpCode::OP_DIVIDE ); ()},
             _ => (),
         }
     }
@@ -550,26 +550,26 @@ impl Parser{
     }
 
     fn and(&mut self, scanner: &mut Scanner,_canAssign: bool){
-        let endJump = self.emitJump(OpCode::OP_JUMP_IF_FALSE);
-        self.emitByte(OpCode::OP_POP as u8);
+        let endJump = self.emitJump(OpCode::OP_JUMP_IF_FALSE(0));
+        self.emitByte(OpCode::OP_POP);
         self.parsePrecedence(Precedence::PREC_AND, scanner);
         self.patchJump(endJump);
     }
     
     fn or(&mut self, scanner: &mut Scanner, _canAssign: bool){
-        let elseJump = self.emitJump(OpCode::OP_JUMP_IF_FALSE);
-        let endJump = self.emitJump(OpCode::OP_JUMP);
+        let elseJump = self.emitJump(OpCode::OP_JUMP_IF_FALSE(0));
+        let endJump = self.emitJump(OpCode::OP_JUMP(0));
         self.patchJump(elseJump);
-        self.emitByte(OpCode::OP_POP as u8);
+        self.emitByte(OpCode::OP_POP);
         self.parsePrecedence(Precedence::PREC_OR, scanner);
         self.patchJump(endJump);
     }
 
     fn literal(&mut self, _scanner: &mut Scanner, _canAssign: bool){
         match self.previous.ttype {
-            TokenType::TOKEN_FALSE => {self.emitByte(OpCode::OP_FALSE as u8); ()},
-            TokenType::TOKEN_TRUE => {self.emitByte(OpCode::OP_TRUE as u8); ()},
-            TokenType::TOKEN_NIL => {self.emitByte(OpCode::OP_NIL as u8); ()},
+            TokenType::TOKEN_FALSE => {self.emitByte(OpCode::OP_FALSE); ()},
+            TokenType::TOKEN_TRUE => {self.emitByte(OpCode::OP_TRUE); ()},
+            TokenType::TOKEN_NIL => {self.emitByte(OpCode::OP_NIL); ()},
             _ => {()}
         } 
     }
@@ -595,20 +595,23 @@ impl Parser{
         // decide if variable is local or global, and choose the appropriate opcodes
         let arg  = match self.resolveLocal(top_compiler_index, name.clone()){
             Some(index) => {
-                getOp = OpCode::OP_GET_LOCAL;
-                setOp = OpCode::OP_SET_LOCAL;
+                getOp = OpCode::OP_GET_LOCAL(0);
+                setOp = OpCode::OP_SET_LOCAL(0);
                 index
             },
             None => {
                 match self.resolveUpvalue(top_compiler_index, name.clone()){
                     Some(i) => {
-                        getOp  = OpCode::OP_GET_UPVALUE; 
-                        setOp  = OpCode::OP_SET_UPVALUE; 
+                        todo!();
+                    /*
+                        getOp  = OpCode::OP_GET_UPVALUE(0); 
+                        setOp  = OpCode::OP_SET_UPVALUE(0); 
                         i
+                    */
                     },
                     None => {
-                        getOp = OpCode::OP_GET_GLOBAL;
-                        setOp = OpCode::OP_SET_GLOBAL;
+                        getOp = OpCode::OP_GET_GLOBAL(0);
+                        setOp = OpCode::OP_SET_GLOBAL(0);
                         self.identifierConstant(name) 
                     }
                 }    
@@ -617,9 +620,19 @@ impl Parser{
 
         if self.Match(scanner, TokenType::TOKEN_EQUAL) && canAssign{
             self.expression(scanner);
-            self.emitTwoBytes(setOp as u8, arg);
+            match setOp {
+                OpCode::OP_SET_GLOBAL(_) => self.emitByte(OpCode::OP_SET_GLOBAL(arg as usize)),
+                OpCode::OP_SET_LOCAL(_) => self.emitByte(OpCode::OP_SET_LOCAL(arg as usize)),
+                OpCode::OP_SET_UPVALUE(_) => todo!(),
+                _ => panic!()
+            }
         }
-        self.emitTwoBytes(getOp as u8, arg);
+        match getOp {
+            OpCode::OP_GET_GLOBAL(_) => self.emitByte(OpCode::OP_GET_GLOBAL(arg as usize)),
+            OpCode::OP_GET_LOCAL(_) => self.emitByte(OpCode::OP_GET_LOCAL(arg as usize)),
+            OpCode::OP_GET_UPVALUE(_) => todo!(),
+            _ => panic!()
+        }
     }
 
     fn resolveLocal(&mut self,compiler_stack_index: usize, name: Token) -> Option<u8>{
@@ -757,7 +770,7 @@ impl Parser{
             self.compilerStack.last_mut().unwrap().markInitialized();
             return; 
         }
-        self.emitTwoBytes(OpCode::OP_DEFINE_GLOBAL as u8, global);
+        self.emitByte(OpCode::OP_DEFINE_GLOBAL(global as usize));
     }
 
     fn declareVariable(&mut self, ){
@@ -798,26 +811,31 @@ impl Parser{
         }
     }
 
-    fn emitByte(&mut self, new_byte: u8){
+    fn emitByte(&mut self, new_opcode: OpCode){
         // add a byte to the current chunk
         let line = self.previous.line;
-        self.currentChunk().write_chunk(new_byte, line);
+        self.currentChunk().write_chunk(new_opcode, line);
     }
 
-    fn emitTwoBytes(&mut self, byte1: u8, byte2: u8){
-        // What do you think it does?
-        self.emitByte(byte1);
-        self.emitByte(byte2);
+    fn emitTwoBytes(&mut self, code1: OpCode, code2: OpCode){
+        self.emitByte(code1);
+        self.emitByte(code2);
     }
 
     fn emitConstant(&mut self, value: Value){
         // adds the opcode and the constant index
         let cnst = self.makeConstant(value);
-        self.emitTwoBytes(OpCode::OP_CONSTANT as u8, cnst);
+        self.emitByte(OpCode::OP_CONSTANT(cnst as usize));
     }
 
     fn makeConstant(&mut self, new_val: Value) -> u8{
-        let cnst_index = self.currentChunk().add_constant(new_val); 
+        let cnst = match new_val {
+            Value::VAL_NUMBER(num) => Constant::NUMBER(num),
+            Value::VAL_STRING(str) => Constant::STRING(str.name),
+            Value::VAL_FUNCTION(func) => Constant::FUNCTION(func),
+            _ => panic!()
+        };
+        let cnst_index = self.currentChunk().add_constant(cnst); 
         // arbitrarily cap number of constants at u8::MAX because you have to draw the line
         // somewhere
         if cnst_index > std::u8::MAX as usize {
@@ -829,35 +847,38 @@ impl Parser{
 
     fn emitReturn(&mut self) {
         // you emit a OP_NIL since you need to cover the case where nothing gets returned
-        self.emitByte(OpCode::OP_NIL as u8);
-        self.emitByte(OpCode::OP_RETURN as u8);
+        self.emitByte(OpCode::OP_NIL);
+        self.emitByte(OpCode::OP_RETURN);
     }
 
     fn emitJump(&mut self, new_val: OpCode) -> usize{
-        // Emit a jump instruction, leaving space for the return address to write to later
-        self.emitByte(new_val as u8);
-        self.emitByte(0xff);
-        self.emitByte(0xff);
-        return self.currentChunk().get_count()-2
+        // Emit a jump instruction
+        match new_val {
+            OpCode::OP_LOOP(_) => self.emitByte(OpCode::OP_LOOP(0xFFFF)),
+            OpCode::OP_JUMP(_) => self.emitByte(OpCode::OP_JUMP(0xFFFF)),
+            OpCode::OP_JUMP_IF_FALSE(_) => self.emitByte(OpCode::OP_JUMP_IF_FALSE(0xFFFF)),
+            _ => panic!()
+        }
+        // return current index of instruction for patching later
+        return self.currentChunk().get_count()-1
     }
 
     fn patchJump(&mut self, offset: usize){
         // override the previous two bytes with the new offset
-        let jump = self.currentChunk().get_count()-offset-2;
-        let high = jump >> 8 & 0xFF;
-        let low  = jump & 0xFF;
-        self.currentChunk().edit_chunk(offset, high as u8);
-        self.currentChunk().edit_chunk(offset+1, low as u8);
+        let jump = self.currentChunk().get_count()-offset;
+        let a = self.currentChunk().get_instr(offset);
+        match a.unwrap() {
+            OpCode::OP_LOOP(_) => self.currentChunk().edit_chunk(offset, OpCode::OP_LOOP(jump)),
+            OpCode::OP_JUMP(_) => self.currentChunk().edit_chunk(offset, OpCode::OP_JUMP(jump)),
+            OpCode::OP_JUMP_IF_FALSE(_) => self.currentChunk().edit_chunk(offset, OpCode::OP_JUMP_IF_FALSE(jump)),
+            _ => panic!()
+        }
     }
 
     fn emitLoop(&mut self, loopStart: usize){
         // backpatch loop, like patchJump
-        self.emitByte(OpCode::OP_LOOP as u8);
-        let offset = self.currentChunk().get_count()- loopStart+2;
-        let high = (offset >> 8) & 0xff;
-        let low = offset & 0xff;
-        self.emitByte(high as u8);
-        self.emitByte(low as u8);
+        let offset = self.currentChunk().get_count()-loopStart;
+        self.emitByte(OpCode::OP_LOOP(offset));
     }
     
     pub fn currentChunk(&mut self) -> & mut Chunk{
@@ -967,7 +988,6 @@ impl Parser{
         // save closure to vm
         let new_val = Value::VAL_FUNCTION(comp.function);
         let b = self.makeConstant(new_val);
-        self.emitTwoBytes(OpCode::OP_CLOSURE as u8, b);
         let mut isLocalVec: Vec<u8> = Vec::new();
         let mut IndexVec: Vec<u8> = Vec::new();
         for i in 0..comp.upvalues.len(){
@@ -980,10 +1000,7 @@ impl Parser{
                 _ => panic!()
               }
         }
-        for i in 0..isLocalVec.len(){
-            self.emitByte(isLocalVec[i]);
-            self.emitByte(IndexVec[i]);
-        }
+        self.emitByte(OpCode::OP_CLOSURE(b as usize, Vec::new()) );
     }
 
     fn beginScope(&mut self){
@@ -1005,9 +1022,9 @@ impl Parser{
                 let var_depth = cur_comp.locals.last().unwrap().depth.unwrap();
                 if var_depth > cur_comp.scopeDepth {
                     if cur_comp.locals.last().unwrap().isCaptured{
-                        self.emitByte(OpCode::OP_CLOSE_UPVALUE as u8);
+                        self.emitByte(OpCode::OP_CLOSE_UPVALUE);
                     } else {
-                        self.emitByte(OpCode::OP_POP as u8);
+                        self.emitByte(OpCode::OP_POP);
                     }
                     self.compilerStack.last_mut().unwrap().locals.pop();
                     continue;
