@@ -1,8 +1,8 @@
 #![allow(non_camel_case_types)]
-use crate::value::{LoxFunction, LoxString, Upvalue, Value};
+use crate::value::{LoxFunction, UpvalueIndex, UpvalueType};
 
 // Growing list of supported opcodes
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum OpCode {
     // each entry corresponds to a single u8 unless noted otherwise
     OP_CONSTANT(usize),
@@ -32,7 +32,7 @@ pub enum OpCode {
     OP_JUMP_IF_FALSE(usize),
     OP_LOOP(usize),
     OP_CALL(usize),
-    OP_CLOSURE(usize,Vec<Upvalue>),
+    OP_CLOSURE(usize,Vec<UpvalueIndex>),
     OP_RETURN,
 }
 
@@ -70,13 +70,13 @@ pub enum Constant{
 #[derive(Clone)]
 pub struct Chunk {
     code: Vec<OpCode>, // holds the byte code for the chunk
-    value_array: Vec<Constant>, // hold the values of the chunk as floats
+    constant_array: Vec<Constant>, // hold the constants of the chunk
     lines: Vec<usize>, // for a given instruction, store the line where it was originated from
 }
 
 impl Chunk {
     pub fn new() -> Self{
-        Chunk {code: Vec::new(), value_array: Vec::new(), lines: Vec::new()}
+        Chunk {code: Vec::new(), constant_array: Vec::new(), lines: Vec::new()}
     }
 
     pub fn write_chunk(&mut self, data: OpCode, line: usize){
@@ -96,12 +96,12 @@ impl Chunk {
     }
 
     pub fn add_constant(&mut self, new_val: Constant) ->usize{
-        self.value_array.push(new_val);
-        return self.value_array.len()-1;
+        self.constant_array.push(new_val);
+        return self.constant_array.len()-1;
     }
 
     pub fn get_constant(&self, index: usize) -> Option<&Constant>{
-        self.value_array.get(index)
+        self.constant_array.get(index)
     }
 
     pub fn get_count(&self) ->usize{
@@ -127,31 +127,23 @@ impl Chunk {
             match opcode { // make sure that u8 conversion went well
                     OpCode::OP_PRINT => self.simple_instruction("OP_PRINT")?,
                     OpCode::OP_CALL(index) => self.byte_instruction("OP_CALL", *index)?,
-                    OpCode::OP_CLOSURE(_,_) => {
-                        todo!();
-/*
-                        let mut cur_offset = offset; 
-                        cur_offset += 1;
-                        let constant = self.code.get(cur_offset).unwrap();
-                        cur_offset += 1;
-                        print!("{} {} ", "OP_CLOSURE", constant);
-                        self.get_constant(*constant as usize).unwrap().print_value();
-                        println!("");
-                        match self.get_constant(*constant as usize).unwrap(){
-                            Value::VAL_FUNCTION(func) => {
-                                for _ in 0..func.upvalueCount{
-                                    let isLocal = self.get_instr(cur_offset).unwrap();
-                                    let local_name = match isLocal {1 => "local", 0 => "upvalue", _ => panic!()};
-                                    cur_offset += 1;
-                                    let index = self.get_instr(cur_offset).unwrap();
-                                    cur_offset += 1;
-                                    println!("{:04}    |     {} {}", cur_offset-2, local_name, index);
-                                } 
-                            },
+                    OpCode::OP_CLOSURE(constant_index, upvalues) => {
+                        let closure_function = match self.constant_array.get(*constant_index).unwrap(){
+                            Constant::FUNCTION(func) => func,
                             _ => panic!()
+                        };
+
+                        println!("{} {} {}", "OP_CLOSURE", *constant_index, closure_function.name.name);
+                        let mut upval_index = 0;
+                        for val in upvalues{
+                            let local_name = match val.isLocal {
+                                UpvalueType::UPVALUE => "upvalue",
+                                UpvalueType::LOCAL => "local"
+                            };
+                            println!("{:04}    |     {} {}", chunk_location+2*upval_index, local_name, val.index); 
+                            upval_index += 1;
                         }
-                        return Ok(cur_offset);
-*/    
+                       return Ok(());
                     },
                     OpCode::OP_RETURN => self.simple_instruction("OP_RETURN")?,
                     OpCode::OP_NIL => self.simple_instruction("OP_NIL")?,
@@ -164,7 +156,7 @@ impl Chunk {
                     OpCode::OP_SET_GLOBAL(index) => self.constant_instruction("OP_SET_GLOBAL", *index)?,
                     OpCode::OP_GET_LOCAL(index) => self.byte_instruction("OP_GET_LOCAL", *index )?,
                     OpCode::OP_SET_LOCAL(index) => self.byte_instruction("OP_SET_LOCAL", *index )?,
-                    OpCode::OP_GET_UPVALUE(index) => self.byte_instruction("OP_SET_UPVALUE", *index)?,
+                    OpCode::OP_GET_UPVALUE(index) => self.byte_instruction("OP_GET_UPVALUE", *index)?,
                     OpCode::OP_SET_UPVALUE(index) => self.byte_instruction("OP_SET_UPVALUE", *index)?,
                     OpCode::OP_JUMP(jump_length) => self.jump_instruction("OP_JUMP", true , *jump_length, chunk_location)?,
                     OpCode::OP_LOOP(jump_length) => self.jump_instruction("OP_LOOP", false, *jump_length, chunk_location)?,
@@ -194,7 +186,7 @@ impl Chunk {
   fn constant_instruction(&self, name: &str, constant_index: usize) -> Result<(),String> {
     // format: OPCODE at offset, and then immediately afterwards, the index in the ValueArray
     // corresponding to the constant
-            match self.value_array.get(constant_index) {
+            match self.constant_array.get(constant_index) {
                 None =>  return Err(format!("Trying to access {} outside of value range", constant_index)),
                 Some (value) =>{
                     print!("{}", format!("{:<16} {:4} '", name, constant_index));
@@ -233,8 +225,8 @@ impl Chunk {
     let mut offset: usize = 0;
     let mut lox_ref: usize = 0;
     while offset < self.get_count() {
-//        self.disassemble_instruction(offset, lox_ref);
-        self.disassemble_instruction(offset, offset);
+        self.disassemble_instruction(offset, lox_ref);
+//        self.disassemble_instruction(offset, offset);
         lox_ref += self.code.get(offset).unwrap().length();
         offset += 1;
     }
