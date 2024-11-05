@@ -7,6 +7,7 @@ use crate:: stack::LoxStack;
 use crate::value::*;
 use crate::compiler::*;
 use crate::table::LoxTable;
+use  crate::heap;
 
 use core::{fmt, panic};
 use std::time::{SystemTime, UNIX_EPOCH};

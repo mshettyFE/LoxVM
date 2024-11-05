@@ -4,6 +4,7 @@ pub mod chunk;
 pub mod value;
 pub mod vm;
 pub mod stack;
+pub mod heap;
 pub mod scanner;
 pub mod compiler;
 pub mod table;
@@ -16,4 +17,4 @@ extern crate num_derive;
 use once_cell::sync::OnceCell;
 pub static DEBUG_TRACE_EXEC: OnceCell<bool> = OnceCell::new();
 pub static DEBUG_PRINT_CODE: OnceCell<bool> = OnceCell::new();
-
+pub static DEBUG_STRESS_GC: OnceCell<bool> = OnceCell::new();

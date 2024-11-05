@@ -18,6 +18,8 @@ struct Args{
     trace_flag: bool,
     #[arg(short,long, action= ArgAction::SetTrue)]
     print_code_flag: bool,
+    #[arg(short,long, action= ArgAction::SetTrue)]
+    stress_gc_flag: bool,
 }
 
 fn repl(){
@@ -62,6 +64,7 @@ fn main() {
     let cli = Args::parse();
     DEBUG_TRACE_EXEC.set(cli.trace_flag).expect("Couldn't initialize debug trace flag");
     DEBUG_PRINT_CODE.set(cli.print_code_flag).expect("Couldn't initialize debug print code flag");
+    DEBUG_STRESS_GC.set(cli.stress_gc_flag).expect("Couldn't initialize debug stress gc");
     if cli.file_name != "None" {
        runFile(cli.file_name.to_string());
     }

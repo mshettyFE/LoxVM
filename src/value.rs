@@ -28,7 +28,7 @@ pub struct UpvalueIndex{
     pub isLocal: UpvalueType
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum Upvalue{
     Open(usize),
     Closed(Box<Value>)
@@ -113,13 +113,6 @@ pub enum Value {
     VAL_NATIVE(NativeFn),
     VAL_CLOSURE(LoxClosure),
     VAL_UPVALUE(Rc<RefCell<Upvalue>>)
-}
-
-impl std::fmt::Debug for Value{
-    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-       self.print_value();
-       Ok(()) 
-    }
 }
 
 impl Value {

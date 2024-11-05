@@ -28,10 +28,4 @@ impl LoxTable{
         return self.hash_map.get(&hash).cloned();
    }
 
-    pub fn print(&self){
-        for (key, value) in &self.hash_map {
-            println!("{:#?}: {:#?}", key, value);
-        } 
-    }
-
 }

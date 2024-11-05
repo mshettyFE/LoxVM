@@ -2,8 +2,6 @@
 use crate::scanner::{Token, TokenType, Scanner};
 use crate::chunk::{Chunk, Constant, OpCode};
 use crate::value::*;
-use std::cell::RefCell;
-use std::rc::Rc;
 use crate::DEBUG_PRINT_CODE;
 use std::mem;
 
