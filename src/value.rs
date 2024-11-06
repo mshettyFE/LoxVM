@@ -13,8 +13,7 @@ pub enum LoxType{
     STRING,
     FUNCTION,
     NATIVE,
-    CLOSURE,
-    UPVALUE
+    CLOSURE
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -32,7 +31,7 @@ pub struct UpvalueIndex{
 #[derive(Clone)]
 pub enum Upvalue{
     Open(usize),
-    Closed(Box<Value>)
+    Closed(Value)
 }
 
 impl Upvalue{

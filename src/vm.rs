@@ -161,7 +161,7 @@ impl VM {
                          self.stk.push(self.stk.get( idx+1).unwrap())
                      },
                      Upvalue::Closed(val) => {
-                         self.stk.push(*val.clone())
+                         self.stk.push(val.clone())
                      }
                    }
               },
@@ -178,7 +178,7 @@ impl VM {
                             self.stk.set( idx+1, val)
                         },
                         Upvalue::Closed(_) => {
-                            self.getCurrentFrame().closure.upvalues[index] = Rc::new(RefCell::new(Upvalue::Closed(Box::new(val))))
+                            self.getCurrentFrame().closure.upvalues[index] = Rc::new(RefCell::new(Upvalue::Closed(val)))
                         }
                     }
               },
@@ -445,7 +445,7 @@ impl VM {
                 None => ()
             }
             if upval.borrow().is_open_with_index(index) {
-                upval.replace(Upvalue::Closed(Box::new(value.clone())));
+                upval.replace(Upvalue::Closed(value.clone()));
             }
         }
 
