@@ -158,7 +158,7 @@ impl VM {
                    let upvalue_copy = self.getCurrentFrame().closure.upvalues[index].borrow().clone();
                    match upvalue_copy{
                      Upvalue::Open(idx) => {
-                         self.stk.push(self.stk.get( idx).unwrap())
+                         self.stk.push(self.stk.get( idx+1).unwrap())
                      },
                      Upvalue::Closed(val) => {
                          self.stk.push(*val.clone())
