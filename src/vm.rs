@@ -158,12 +158,9 @@ impl VM {
                    let upvalue_copy = self.getCurrentFrame().closure.upvalues[index].borrow().clone();
                    match upvalue_copy{
                      Upvalue::Open(idx) => {
-                         println!("OPEN");
-                         //self.stk.print(&self.gc);
                          self.stk.push(self.stk.get( idx).unwrap())
                      },
                      Upvalue::Closed(val) => {
-                         println!("CLOSED");
                          self.stk.push(*val.clone())
                      }
                    }
@@ -211,7 +208,7 @@ impl VM {
                 },
                 OpCode::OP_CONSTANT(constant_index) => { // add constant to stack
                   let constant: Value = self.read_constant(constant_index);
-                 self.stk.push(constant.clone());
+                  self.stk.push(constant.clone());
                },
                OpCode::OP_NIL => {
                     self.stk.push(Value::VAL_NIL);

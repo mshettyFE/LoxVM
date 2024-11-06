@@ -101,7 +101,7 @@ impl Value {
                 false => print!("false")
             },
             Value::VAL_NUMBER(num) => print!("{:<.5}", num),
-            Value::VAL_STRING(name) => print!("{}", name),
+            Value::VAL_STRING(id) => print!("{}", heap.get_str(*id)),
             Value::VAL_FUNCTION(id) => print!("<fn {}>", heap.get_function(*id).name ),
             Value::VAL_NATIVE(_) => print!("<native fn>"),
             Value::VAL_CLOSURE(id) => { print!("{}", heap.get_closure(*id).function.name )},
