@@ -5,27 +5,25 @@
 
 use std::collections::HashMap;
 
-use crate::value::{LoxString, Value};
+use crate::value::Value;
 
 pub struct LoxTable {
-    hash_map: HashMap<u64, Value>,
+    hash_map: HashMap<String, Value>,
 }
 
 impl LoxTable{
     pub fn new() -> Self{
         LoxTable{hash_map: HashMap::new()}
     }
-    pub fn insert(&mut self, key: LoxString, val: Value) -> Option<Value> {
-        self.hash_map.insert(key.hash, val)
+    pub fn insert(&mut self, key: String, val: Value) -> Option<Value> {
+        self.hash_map.insert(key, val)
     }
-    pub fn delete(&mut self, val_to_delete: LoxString){
-        let hash = val_to_delete.hash; 
-        self.hash_map.remove(&hash);
+    pub fn delete(&mut self, val_to_delete: String){
+        self.hash_map.remove(&val_to_delete);
     }
 
-    pub fn find(&self, key: LoxString) -> Option<Value>{
-        let hash = key.hash;
-        return self.hash_map.get(&hash).cloned();
+    pub fn find(&self, key: String) -> Option<Value>{
+        return self.hash_map.get(&key).cloned();
    }
 
 }

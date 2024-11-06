@@ -1,6 +1,7 @@
 #![allow(non_camel_case_types)]
 
 use crate::chunk::*;
+use crate::heap::*;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -57,39 +58,16 @@ impl Upvalue{
     }
 }
 
-#[derive(Clone, PartialEq)]
-pub struct LoxString{
-    pub name: String,
-    pub hash: u64
-}
-
-impl LoxString{
-    pub fn new(val: String) -> Self{
-        let h = LoxString::gen_hash(val.clone());
-        LoxString{name: val, hash: h}
-    }
-
-    fn gen_hash(val: String) -> u64{
-        // simple hash function called "FNV-1a". 
-        let mut hash: u64 = 2166136261;
-        for byte in val.as_bytes(){
-            hash ^= *byte as u64;
-            hash = hash.wrapping_mul(16777619);
-        }
-        return hash;
-    }
-}
-
 #[derive(Clone)]
 pub struct LoxFunction{
     pub arity: usize,
-    pub name: LoxString,
+    pub name: String,
     pub chunk: Chunk,
     pub upvalueCount: usize
 }
 
 impl LoxFunction{
-    pub fn new( new_arity: usize, new_name: LoxString) -> Self{
+    pub fn new( new_arity: usize, new_name: String) -> Self{
         LoxFunction{arity: new_arity, name: new_name, chunk: Chunk::new(), upvalueCount: 0}
     }
 }
@@ -108,15 +86,14 @@ pub enum Value {
     VAL_NIL,
     VAL_BOOL(bool),
     VAL_NUMBER(f64),
-    VAL_STRING(LoxString),
-    VAL_FUNCTION(LoxFunction),
+    VAL_STRING(heapID),
+    VAL_FUNCTION(heapID),
     VAL_NATIVE(NativeFn),
-    VAL_CLOSURE(LoxClosure),
-    VAL_UPVALUE(Rc<RefCell<Upvalue>>)
+    VAL_CLOSURE(heapID)
 }
 
 impl Value {
-    pub fn print_value(&self){
+    pub fn print_value(&self, heap: &Heap){
         match self{
             Value::VAL_NIL => print!("NIL"),
             Value::VAL_BOOL(v) => match v{
@@ -124,11 +101,10 @@ impl Value {
                 false => print!("false")
             },
             Value::VAL_NUMBER(num) => print!("{:<.5}", num),
-            Value::VAL_STRING(name) => print!("{}", name.name),
-            Value::VAL_FUNCTION(func) => print!("<fn {}>", func.name.name),
+            Value::VAL_STRING(name) => print!("{}", name),
+            Value::VAL_FUNCTION(id) => print!("<fn {}>", heap.get_function(*id).name ),
             Value::VAL_NATIVE(_) => print!("<native fn>"),
-            Value::VAL_CLOSURE(closure) => { print!("{}",closure.function.name.name)},
-            Value::VAL_UPVALUE(_) => print!("upvalue")
+            Value::VAL_CLOSURE(id) => { print!("{}", heap.get_closure(*id).function.name )},
        }
     }
 
@@ -141,7 +117,6 @@ impl Value {
             Value::VAL_FUNCTION(_) => LoxType::FUNCTION,
             Value::VAL_NATIVE(_) => LoxType::NATIVE,
             Value::VAL_CLOSURE(_) => LoxType::CLOSURE,
-            Value::VAL_UPVALUE(_) => LoxType::UPVALUE
         }
     }
 }

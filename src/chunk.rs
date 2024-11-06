@@ -133,7 +133,7 @@ impl Chunk {
                             _ => panic!()
                         };
 
-                        println!("{} {} {}", "OP_CLOSURE", *constant_index, closure_function.name.name);
+                        println!("{} {} {}", "OP_CLOSURE", *constant_index, closure_function.name);
                         let mut upval_index = 0;
                         for val in upvalues{
                             let local_name = match val.isLocal {
@@ -193,7 +193,7 @@ impl Chunk {
                     match value{
                         Constant::NUMBER(num) => print!("{}", num),
                         Constant::STRING(str) => print!("{}", str),
-                        Constant::FUNCTION(func) => print!("{}", func.name.name)
+                        Constant::FUNCTION(func) => print!("{}", func.name)
                     }
                     print!("'\n");
                     return Ok(()); // jump to after end of OP_CONSTANT

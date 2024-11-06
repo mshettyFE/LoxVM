@@ -1,4 +1,5 @@
 use crate::value::Value;
+use crate::heap::Heap;
 // really basic stack
 pub struct LoxStack {
     stk: Vec<Value>,
@@ -42,12 +43,12 @@ impl LoxStack {
         self.stk[index] = value;
     }
 
-    pub fn print(&self){
+    pub fn print(&self, heap: &Heap){
         // convenience function to view the guts of the stack
         print!("        ");
         for item in &self.stk{
             print!("[ ");
-            item.print_value();
+            item.print_value(heap);
             print!(" ]");
         }
         println!("");

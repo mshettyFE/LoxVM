@@ -1,5 +1,6 @@
 #![allow(non_camel_case_types)]
 
+use crate::heap::Heap;
 use crate::{chunk::OpCode, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -7,7 +8,6 @@ use crate:: stack::LoxStack;
 use crate::value::*;
 use crate::compiler::*;
 use crate::table::LoxTable;
-use  crate::heap;
 
 use core::{fmt, panic};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -36,6 +36,7 @@ impl CallFrame {
 pub struct VM{
     frames: Vec<CallFrame>, // stores the function stack
     stk: LoxStack, // value stack 
+    gc: Heap,       // heap allocated things
     globals: LoxTable,  // global vars
     parser: Parser, // Bundled here b/c Rust is paranoid
     upvalues: Vec<Rc<RefCell<Upvalue>>> // list of pointers to upvalues
@@ -52,12 +53,13 @@ impl VM {
         frames: Vec::new(),
         globals: LoxTable::new(),
         stk: LoxStack::new(),
+        gc: Heap::new(),
         parser: Parser::new(),
         upvalues: Vec::new()
         };
 
         // native functions get defined here
-        x.defineNative(LoxString::new("clock".to_string()), clockNative);
+        x.defineNative("clock".to_string(), clockNative);
         x
     }
     
@@ -69,7 +71,8 @@ impl VM {
         match self.parser.compile(&mut scanner){
             None => return InterpretResult::INTERPRET_COMPILE_ERROR("Couldn't compile chunk".to_string()),
             Some(comp) => {
-                self.stk.push(Value::VAL_CLOSURE(LoxClosure { function: comp.function, upvalues: Vec::new() }));
+                let id = self.gc.manage_closure( LoxClosure { function: comp.function, upvalues: Vec::new() } );
+                self.stk.push(Value::VAL_CLOSURE( id ));
                 // this callValue simple executes the top level function
                 match self.callValue(self.stk.peek(0).unwrap(), 0){
                         Err(str) => { return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str)))}
@@ -90,7 +93,7 @@ impl VM {
                 Err(err_msg) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",err_msg))),
              };
               if *DEBUG_TRACE_EXEC.get().unwrap(){
-               self.stk.print();
+               self.stk.print(&self.gc);
                let frame = self.getCurrentFrame();
                 //println!("{}", frame.ip);
                frame.closure.function.chunk.disassemble_instruction(frame.ip-1, frame.ip-1).unwrap();
@@ -103,7 +106,7 @@ impl VM {
                 OpCode::OP_PRINT => {
                     match self.stk.pop(){
                         Some(v) => {
-                            v.print_value();
+                            v.print_value(&self.gc);
                             println!();
                         }
                         None => {return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Stack is empty")))}
@@ -127,7 +130,7 @@ impl VM {
                     }
                 },
                 OpCode::OP_CLOSURE(function_index, upvalues) => {
-                    if let Value::VAL_FUNCTION(func) = self.read_constant(function_index){
+                    if let Value::VAL_FUNCTION(id) = self.read_constant(function_index){
                     let new_upvalues = upvalues.iter().map(
                             |uval| match uval.isLocal{
                                 UpvalueType::UPVALUE => {self.getCurrentFrame().closure.upvalues[uval.index].clone() },
@@ -145,25 +148,9 @@ impl VM {
                                 
                             }
                         ).collect();
-/*
-                        let mut new_upvalues: Vec<Rc<RefCell<Upvalue>>> = Vec::new();
-                        for val in upvalues{
-                            let new_upvalue = match val.isLocal{
-                                UpvalueType::UPVALUE => Rc::new(RefCell::new(Upvalue::Open(val))),
-                                UpvalueType::LOCAL => {
-                                    let init_index = self.getCurrentFrame().starting_index;
-                                    for upval in self.upvalues.iter().rev(){
-                                        if upval.borrow().is_open_with_index(index){
-                                            upval.clone()
-                                        }
-                                    }
-                                    return Rc::new(RefCell::new(Upvalue::Open(UpvalueIndex{index, isLocal: UpvalueType::UPVALUE} )));
-                                }
-                            };
-                            new_upvalues.push(new_upvalue);
-                        }
-*/
-                        let new_c = Value::VAL_CLOSURE(LoxClosure{function: func, upvalues:  new_upvalues });
+                        let func = self.gc.get_function(id);
+                        let closure_id = self.gc.manage_closure(LoxClosure{function: func.clone(), upvalues:  new_upvalues });
+                        let new_c = Value::VAL_CLOSURE(closure_id);
                         self.stk.push(new_c);
                     } else {panic!()}
               },
@@ -171,9 +158,14 @@ impl VM {
                    let upvalue_copy = self.getCurrentFrame().closure.upvalues[index].borrow().clone();
                    match upvalue_copy{
                      Upvalue::Open(idx) => {
+                         println!("OPEN");
+                         //self.stk.print(&self.gc);
                          self.stk.push(self.stk.get( idx).unwrap())
                      },
-                     Upvalue::Closed(val) => self.stk.push(*val.clone())
+                     Upvalue::Closed(val) => {
+                         println!("CLOSED");
+                         self.stk.push(*val.clone())
+                     }
                    }
               },
                OpCode::OP_SET_UPVALUE(index) => {
@@ -245,7 +237,7 @@ impl VM {
                                           // table
                     let slot = self.read_constant(name_index);
                     let name = match slot {
-                        Value::VAL_STRING(n) => n,
+                        Value::VAL_STRING(id) => self.gc.get_str(id),
                         _ => panic!()
                     };
                    let wrapped_val = self.globals.find(name.clone());
@@ -254,16 +246,17 @@ impl VM {
                             self.stk.push(value);
                         }
                         None => {
-                            return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Undefined variable {}.",name.name.clone())));
+                            return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Undefined variable {}.",name.clone())));
                         }
                      }
                }
                OpCode::OP_DEFINE_GLOBAL(name_index) => { // Creating a new global variable 
                     let name: Value = self.read_constant(name_index);
                     match name {
-                        Value::VAL_STRING(str) => {
+                        Value::VAL_STRING(str_id) => {
                                let value = self.stk.peek(0).unwrap();
-                               self.globals.insert(str, value);
+                               let str = self.gc.get_str(str_id);
+                               self.globals.insert(str.clone(), value);
                         },
                         _ => { return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Tried accessing a global")))}
 
@@ -273,10 +266,11 @@ impl VM {
                OpCode::OP_SET_GLOBAL(name_index) => { // updating an existing variable
                     let name: Value = self.read_constant(name_index);
                     match name {
-                        Value::VAL_STRING(key) => {
+                        Value::VAL_STRING(str_id) => {
                                let value = self.stk.peek(0).unwrap();
-                               if self.globals.insert(key.clone(), value).is_none(){
-                                    return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Undefined variable {}.", key.name)))
+                               let key = self.gc.get_str(str_id);
+                               if self.globals.insert(key.to_string(), value).is_none(){
+                                    return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Undefined variable {}.", key.clone())))
                                }
                         },
                         _ => { return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}","Tried accessing a global")));}
@@ -362,8 +356,9 @@ impl VM {
                             LoxType::STRING => {
                                 if let Value::VAL_STRING(a_val) = a{
                                     if let Value::VAL_STRING(b_val) = b{
-                                        let new_str = format!("{}{}", b_val.name, a_val.name);
-                                        Value::VAL_STRING(LoxString::new(new_str))
+                                        let new_str = format!("{}{}", b_val, a_val);
+                                        let id = self.gc.manage_str(new_str);
+                                        Value::VAL_STRING(id)
                                     } else {panic!()}
                                 } else {panic!()}
                             },
@@ -418,8 +413,9 @@ impl VM {
         // This is a wrapper around Call. It does type checking on the input Value to make sure
         // it's a callable
         match callee {
-            Value::VAL_CLOSURE(cls) => {
-                return self.Call( cls, argCount);
+            Value::VAL_CLOSURE(id) => {
+                let cls = self.gc.get_closure(id);
+                return self.Call( cls.clone(), argCount);
             },
            Value::VAL_NATIVE(native_func) => {
                         let fn_start = self.stk.size()- argCount as usize;
@@ -493,8 +489,14 @@ impl VM {
         let frame = self.getCurrentFrame();
         match frame.closure.function.chunk.get_constant(index as usize).expect("Out of bound error").clone(){
            crate::chunk::Constant::NUMBER(num) => Value::VAL_NUMBER(num),
-           crate::chunk::Constant::STRING(str) => Value::VAL_STRING(LoxString::new(str)),
-           crate::chunk::Constant::FUNCTION(func) => Value::VAL_FUNCTION(func)
+           crate::chunk::Constant::STRING(str) => {
+               let id = self.gc.manage_str(str);
+               Value::VAL_STRING(id)
+           },
+           crate::chunk::Constant::FUNCTION(func) => {
+               let id = self.gc.manage_function(func);
+               Value::VAL_FUNCTION(id)
+            }
         }
     }
 
@@ -519,14 +521,14 @@ impl VM {
                     Some(val) => line = val.clone(),
                     None => panic!()
         }
-        let line_err = format!("[line {}] in {}\n", line,  frame.closure.function.name.name);
+        let line_err = format!("[line {}] in {}\n", line,  frame.closure.function.name);
 
         // stack trace
         let mut cur_frame = self.frames.len()-1;
         let mut stack_trace = "".to_string();
         loop {
             let frame =  self.frames.get_mut(cur_frame).unwrap();
-            stack_trace = format!("{} [line {}] in {}\n", stack_trace, frame.closure.function.chunk.get_line(frame.ip).unwrap(), frame.closure.function.name.name);
+            stack_trace = format!("{} [line {}] in {}\n", stack_trace, frame.closure.function.chunk.get_line(frame.ip).unwrap(), frame.closure.function.name);
             if cur_frame == 0 {break;}
             cur_frame -= 1;
         }
@@ -535,10 +537,11 @@ impl VM {
         return format!("{}{}{}", line_err, err_msg, stack_trace);
     }
 
-    fn defineNative(&mut self, name: LoxString, function: NativeFn){
+    fn defineNative(&mut self, name: String, function: NativeFn){
         // The pushes and pops are weird garbage collector things that aren't really necessary in
         // a Rust-based VM
-        self.stk.push(Value::VAL_STRING(name.clone()));
+        let id = self.gc.manage_str(name.clone());
+        self.stk.push(Value::VAL_STRING(id));
         self.stk.push(Value::VAL_NATIVE(function));
         self.globals.insert( name, self.stk.get(1).unwrap());
         self.stk.pop();

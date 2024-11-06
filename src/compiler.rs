@@ -25,7 +25,7 @@ pub struct Compiler {
 }
 
 impl Compiler {
-    pub fn new(new_ftype: FunctionType, fname: LoxString) -> Self{
+    pub fn new(new_ftype: FunctionType, fname: String) -> Self{
        match new_ftype{
             // Most functions calls go here. You give Names to your functions
             FunctionType::TYPE_FUNCTION => {
@@ -40,7 +40,7 @@ impl Compiler {
             // the "main" function goes here
             FunctionType::TYPE_SCRIPT => {
                 Compiler{
-                    function: LoxFunction::new(0, LoxString::new("script".to_string())),
+                    function: LoxFunction::new(0, "script".to_string()),
                     ftype: new_ftype,
                     locals: Vec::new(),
                     scopeDepth: 0,
@@ -210,7 +210,7 @@ impl Parser{
  rules[TokenType::TOKEN_EOF as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
    
     let mut a: Vec<Compiler> = Vec::new(); 
-    a.push(Compiler::new(FunctionType::TYPE_SCRIPT, LoxString::new("script".to_string())));
+    a.push(Compiler::new(FunctionType::TYPE_SCRIPT, "script".to_string()));
  
  Parser{compilerStack: a, 
         previous: Token {ttype: TokenType::TOKEN_ERROR, start: "".to_string(), line: 0 },
@@ -544,7 +544,7 @@ impl Parser{
     fn number(&mut self, _scanner: &mut Scanner, _canAssign: bool){
         // cast the previous token's string into a double and add said constant to chunk
         let value: f64 = self.previous.start.parse().unwrap(); 
-        self.emitConstant(Value::VAL_NUMBER(value));
+        self.emitConstant(Constant::NUMBER(value));
     }
 
     fn and(&mut self, scanner: &mut Scanner,_canAssign: bool){
@@ -577,8 +577,8 @@ impl Parser{
         let len = quoted.len();
         // trim of quotes
         let unquoted = &quoted[1..len-1];
-        let new_string = LoxString::new(unquoted.to_string());
-        let data =  Value::VAL_STRING(new_string);
+        let new_string = unquoted.to_string();
+        let data =  Constant::STRING(new_string);
         self.emitConstant(data); 
     }
 
@@ -788,7 +788,7 @@ impl Parser{
 
     fn identifierConstant(&mut self, name: Token) -> usize{
         // add variable name to chunk
-        let val = Value::VAL_STRING(LoxString::new(name.start));
+        let val = Constant::STRING(name.start);
         self.makeConstant(val)
     }
 
@@ -812,20 +812,14 @@ impl Parser{
         self.emitByte(code2);
     }
 
-    fn emitConstant(&mut self, value: Value){
+    fn emitConstant(&mut self, value: Constant){
         // adds the opcode and the constant index
         let cnst = self.makeConstant(value);
         self.emitByte(OpCode::OP_CONSTANT(cnst ));
     }
 
-    fn makeConstant(&mut self, new_val: Value) -> usize{
-        let cnst = match new_val {
-            Value::VAL_NUMBER(num) => Constant::NUMBER(num),
-            Value::VAL_STRING(str) => Constant::STRING(str.name),
-            Value::VAL_FUNCTION(func) => Constant::FUNCTION(func),
-            _ => panic!()
-        };
-        let cnst_index = self.currentChunk().add_constant(cnst); 
+    fn makeConstant(&mut self, cnst: Constant) -> usize{
+       let cnst_index = self.currentChunk().add_constant(cnst); 
         // arbitrarily cap number of constants at u8::MAX because you have to draw the line
         // somewhere
         if cnst_index > std::u8::MAX as usize {
@@ -945,7 +939,7 @@ impl Parser{
         // IDENTIFIER was parsed in funDecl, so that's fine
 
         // Entering a new function means you need a new compiler
-        self.compilerStack.push(Compiler::new(ftype, LoxString::new(self.previous.start.clone())));
+        self.compilerStack.push(Compiler::new(ftype, self.previous.start.clone()));
         self.beginScope();
         self.consume(TokenType::TOKEN_LEFT_PAREN, "Expect '(' after function name.".to_string(), scanner);
         // You parse arguments of the function, checking to make sure that you don't have a
@@ -976,7 +970,7 @@ impl Parser{
         let comp = self.endParser().unwrap();
 
         // save closure to vm
-        let new_val = Value::VAL_FUNCTION(comp.function);
+        let new_val = Constant::FUNCTION(comp.function);
         let b = self.makeConstant(new_val);
         self.emitByte(OpCode::OP_CLOSURE(b as usize, comp.upvalues) );
     }
@@ -1018,7 +1012,7 @@ impl Parser{
         let function = &self.compilerStack.last_mut().unwrap().function;
         if *DEBUG_PRINT_CODE.get().unwrap(){
             if !self.hadError{
-                let msg = function.name.name.clone();
+                let msg = function.name.clone();
                 let _ = self.currentChunk().disassemble(msg);
             }
         }
