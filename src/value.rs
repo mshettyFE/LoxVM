@@ -13,7 +13,8 @@ pub enum LoxType{
     STRING,
     FUNCTION,
     NATIVE,
-    CLOSURE
+    CLOSURE,
+    CLASS
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -79,6 +80,11 @@ pub struct LoxClosure{
 
 pub type NativeFn = fn(usize, usize) -> Value;
 
+#[derive(Clone)]
+pub struct LoxClass{
+    pub name: String
+}
+
 // Represents the possible values which the VM can hold
 #[derive(Clone)]
 pub enum Value {
@@ -88,7 +94,8 @@ pub enum Value {
     VAL_STRING(heapID),
     VAL_FUNCTION(heapID),
     VAL_NATIVE(NativeFn),
-    VAL_CLOSURE(heapID)
+    VAL_CLOSURE(heapID),
+    VAL_CLASS(heapID)
 }
 
 impl Value {
@@ -104,6 +111,7 @@ impl Value {
             Value::VAL_FUNCTION(id) => print!("<fn {}>", heap.get_function(*id).name ),
             Value::VAL_NATIVE(_) => print!("<native fn>"),
             Value::VAL_CLOSURE(id) => { print!("{}", heap.get_closure(*id).function.name )},
+            Value::VAL_CLASS(id) => { print!("{}", heap.get_class(*id).name )},
        }
     }
 
@@ -116,6 +124,7 @@ impl Value {
             Value::VAL_FUNCTION(_) => LoxType::FUNCTION,
             Value::VAL_NATIVE(_) => LoxType::NATIVE,
             Value::VAL_CLOSURE(_) => LoxType::CLOSURE,
+            Value::VAL_CLASS(_) => LoxType::CLASS
         }
     }
 }

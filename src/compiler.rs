@@ -299,7 +299,10 @@ impl Parser{
             self.funDeclaration(scanner);
         } else if self.Match(scanner, TokenType::TOKEN_VAR){
             self.varDeclaration(scanner);
-        } else {
+        } else if self.Match(scanner, TokenType::TOKEN_CLASS){
+            self.classDeclaration(scanner);
+        }
+        else {
             self.statement(scanner); 
         }
         if self.panicMode {
@@ -374,6 +377,18 @@ impl Parser{
         self.compilerStack.last_mut().unwrap().markInitialized();
         self.function(FunctionType::TYPE_FUNCTION, scanner);
         self.defineVariable(global);
+    }
+
+    fn classDeclaration(&mut self, scanner: &mut Scanner){
+        self.consume(TokenType::TOKEN_IDENTIFIER, "Expect class name".to_string(), scanner);
+        let nameConstant = self.identifierConstant(self.previous.clone());
+        self.declareVariable();
+
+        self.emitByte(OpCode::OP_CLASS(nameConstant));
+        self.defineVariable(nameConstant);
+
+        self.consume(TokenType::TOKEN_LEFT_BRACE, "Expect '{' before class body.".to_string(), scanner);
+        self.consume(TokenType::TOKEN_RIGHT_BRACE, "Expect '}' before class body.".to_string(), scanner);
     }
     
     fn printStatement(&mut self, scanner: &mut Scanner){

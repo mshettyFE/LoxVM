@@ -1,5 +1,6 @@
 #![allow(non_camel_case_types)]
 
+use std::collections::HashMap;
 use crate::heap::Heap;
 use crate::{chunk::OpCode, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use std::rc::Rc;
@@ -7,7 +8,6 @@ use std::cell::RefCell;
 use crate:: stack::LoxStack;
 use crate::value::*;
 use crate::compiler::*;
-use crate::table::LoxTable;
 
 use core::{fmt, panic};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -37,7 +37,7 @@ pub struct VM{
     frames: Vec<CallFrame>, // stores the function stack
     stk: LoxStack, // value stack 
     gc: Heap,       // heap allocated things
-    globals: LoxTable,  // global vars
+    globals: HashMap<String, Value>,  // global vars
     parser: Parser, // Bundled here b/c Rust is paranoid
     upvalues: Vec<Rc<RefCell<Upvalue>>> // list of pointers to upvalues
 }
@@ -51,7 +51,7 @@ impl VM {
     pub fn new() -> Self{
     let mut x = VM{
         frames: Vec::new(),
-        globals: LoxTable::new(),
+        globals: HashMap::new(),
         stk: LoxStack::new(),
         gc: Heap::new(),
         parser: Parser::new(),
@@ -186,6 +186,15 @@ impl VM {
                   self.closeUpvalue(self.stk.size()-1);
                   self.stk.pop();
              }
+
+                OpCode::OP_CLASS(index) => {
+                    if let Value::VAL_STRING(str_id) =  self.read_constant(index){
+                        let class_name = self.gc.get_str(str_id);
+                        let class_id = self.gc.manage_class(LoxClass{name: class_name.clone()});
+                        self.stk.push(Value::VAL_CLASS(class_id));
+                    } else {panic!()}
+                },
+
                 OpCode::OP_RETURN => { // return from function
                     let result = self.stk.pop();
                     for idx in self.getCurrentFrame().starting_index..self.stk.size(){
@@ -237,10 +246,10 @@ impl VM {
                         Value::VAL_STRING(id) => self.gc.get_str(id),
                         _ => panic!()
                     };
-                   let wrapped_val = self.globals.find(name.clone());
+                   let wrapped_val = self.globals.get(name);
                     match wrapped_val {
                         Some(value) => {
-                            self.stk.push(value);
+                            self.stk.push(value.clone());
                         }
                         None => {
                             return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Undefined variable {}.",name.clone())));

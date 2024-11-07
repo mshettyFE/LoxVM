@@ -33,6 +33,7 @@ pub enum OpCode {
     OP_LOOP(usize),
     OP_CALL(usize),
     OP_CLOSURE(usize,Vec<UpvalueIndex>),
+    OP_CLASS(usize),
     OP_RETURN,
 }
 
@@ -54,6 +55,7 @@ impl OpCode{
             OpCode::OP_CLOSURE(_,upvalues ) => {
                 2+2*upvalues.len()
             }
+            OpCode::OP_CLASS(_) => 2,
             _ => 1
         };
         out
@@ -166,6 +168,7 @@ impl Chunk {
                     OpCode::OP_LESS => self.simple_instruction("OP_LESS")?,
                     OpCode::OP_NEGATE => self.simple_instruction("OP_NEGATE")?,
                     OpCode::OP_CONSTANT(index) => self.constant_instruction("OP_CONSTANT", *index)?,
+                    OpCode::OP_CLASS(index) => self.constant_instruction("OP_CLASS", *index)?,
                     OpCode::OP_ADD => self.simple_instruction("OP_ADD")?,
                     OpCode::OP_SUBTRACT => self.simple_instruction("OP_SUBTRACT")?,
                     OpCode::OP_MULTIPLY => self.simple_instruction("OP_MULTIPLY")?,

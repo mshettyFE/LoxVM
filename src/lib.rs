@@ -7,7 +7,6 @@ pub mod heap;
 pub mod stack;
 pub mod scanner;
 pub mod compiler;
-pub mod table;
 
 extern crate num;
 #[macro_use]
