@@ -419,6 +419,14 @@ impl VM {
         // This is a wrapper around Call. It does type checking on the input Value to make sure
         // it's a callable
         match callee {
+            Value::VAL_CLASS(id) =>{
+                let class = self.gc.get_class(id);
+                let instance_index = self.stk.size()-argCount-1;
+                let instance_id = self.gc.manage_instance(LoxInstance::new(class.clone()));
+                self.stk.set(instance_index, Value::VAL_INSTANCE(instance_id));
+                return Ok(());
+
+            }
             Value::VAL_CLOSURE(id) => {
                 let cls = self.gc.get_closure(id);
                 return self.Call( cls.clone(), argCount);

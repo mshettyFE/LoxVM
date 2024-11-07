@@ -2,6 +2,7 @@
 
 use crate::chunk::*;
 use crate::heap::*;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -14,7 +15,8 @@ pub enum LoxType{
     FUNCTION,
     NATIVE,
     CLOSURE,
-    CLASS
+    CLASS,
+    INSTANCE
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -85,6 +87,20 @@ pub struct LoxClass{
     pub name: String
 }
 
+pub struct LoxInstance{
+    pub klass: LoxClass,
+    fields: HashMap<String, Value>
+}
+
+impl LoxInstance{
+    pub fn new(cls: LoxClass) -> Self{
+        LoxInstance{
+            klass: cls,
+            fields: HashMap::new()
+        }
+    }
+}
+
 // Represents the possible values which the VM can hold
 #[derive(Clone)]
 pub enum Value {
@@ -95,7 +111,8 @@ pub enum Value {
     VAL_FUNCTION(heapID),
     VAL_NATIVE(NativeFn),
     VAL_CLOSURE(heapID),
-    VAL_CLASS(heapID)
+    VAL_CLASS(heapID),
+    VAL_INSTANCE(heapID)
 }
 
 impl Value {
@@ -112,6 +129,7 @@ impl Value {
             Value::VAL_NATIVE(_) => print!("<native fn>"),
             Value::VAL_CLOSURE(id) => { print!("{}", heap.get_closure(*id).function.name )},
             Value::VAL_CLASS(id) => { print!("{}", heap.get_class(*id).name )},
+            Value::VAL_INSTANCE(id) => { print!("{} instance", heap.get_instance(*id).klass.name )},
        }
     }
 
@@ -124,7 +142,8 @@ impl Value {
             Value::VAL_FUNCTION(_) => LoxType::FUNCTION,
             Value::VAL_NATIVE(_) => LoxType::NATIVE,
             Value::VAL_CLOSURE(_) => LoxType::CLOSURE,
-            Value::VAL_CLASS(_) => LoxType::CLASS
+            Value::VAL_CLASS(_) => LoxType::CLASS,
+            Value::VAL_INSTANCE(_) => LoxType::INSTANCE
         }
     }
 }

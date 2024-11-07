@@ -8,7 +8,8 @@ enum heapData{
     Function(LoxFunction),
     Native(NativeFn),
     Closure(LoxClosure),
-    Class(LoxClass)
+    Class(LoxClass),
+    Instance(LoxInstance)
 }
 
 pub trait HeapSize{
@@ -21,6 +22,7 @@ impl heapData{
     pub fn as_native(&self) -> Option<&NativeFn>{ if let heapData::Native(s) = self {Some(s)} else {None}}
     pub fn as_closure(&self) -> Option<&LoxClosure>{ if let heapData::Closure(s) = self {Some(s)} else {None}}
     pub fn as_class(&self) -> Option<&LoxClass>{ if let heapData::Class(s) = self {Some(s)} else {None}}
+    pub fn as_instance(&self) -> Option<&LoxInstance>{ if let heapData::Instance(s) = self {Some(s)} else {None}}
 
    fn heapSize(&self) -> u64 {std::mem::size_of_val(self) as u64}
 }
@@ -52,6 +54,7 @@ impl Heap{
     pub fn manage_native(&mut self, s: NativeFn) -> heapID{self.add_data(heapData::Native(s))}
     pub fn manage_closure(&mut self, s: LoxClosure) -> heapID{self.add_data(heapData::Closure(s))}
     pub fn manage_class(&mut self, s: LoxClass) -> heapID{self.add_data(heapData::Class(s))}
+    pub fn manage_instance(&mut self, s: LoxInstance) -> heapID{self.add_data(heapData::Instance(s))}
 
     fn generate_id(&mut self) -> heapID {
         let a = self.NextID;
@@ -71,5 +74,6 @@ impl Heap{
     pub fn get_native(&self, id: heapID) -> &NativeFn{self.values.get(&id).unwrap().data.as_native().unwrap()}
     pub fn get_closure(&self, id: heapID) -> &LoxClosure{self.values.get(&id).unwrap().data.as_closure().unwrap()}
     pub fn get_class(&self, id: heapID) -> &LoxClass{self.values.get(&id).unwrap().data.as_class().unwrap()}
+    pub fn get_instance(&self, id: heapID) -> &LoxInstance{self.values.get(&id).unwrap().data.as_instance().unwrap()}
 
 }
