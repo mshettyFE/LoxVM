@@ -221,13 +221,13 @@ impl VM {
                     };
 
                     if let Value::VAL_INSTANCE(id) = self.stk.peek(1).unwrap() {
+                        {
                             let inst = self.gc.get_mut_instance(id);
-                            if inst.fields.contains_key(&name){
-                                inst.fields.insert(name.clone(),self.stk.peek(0).unwrap());
-                                let val = self.stk.pop().unwrap();
-                                self.stk.pop();
-                                self.stk.push(val);
-                            }
+                            inst.fields.insert(name.clone(),self.stk.peek(0).unwrap());
+                            let val = self.stk.pop().unwrap();
+                            self.stk.pop();
+                            self.stk.push(val);
+                        }
                     }
                     else {
                         return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Only instances have fields")))

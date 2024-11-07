@@ -82,11 +82,12 @@ pub struct LoxClosure{
 
 pub type NativeFn = fn(usize, usize) -> Value;
 
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub struct LoxClass{
     pub name: String
 }
 
+#[derive(Clone,Debug)]
 pub struct LoxInstance{
     pub klass: LoxClass,
     pub fields: HashMap<String, Value>
@@ -102,7 +103,7 @@ impl LoxInstance{
 }
 
 // Represents the possible values which the VM can hold
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub enum Value {
     VAL_NIL,
     VAL_BOOL(bool),
