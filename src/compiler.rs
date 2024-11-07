@@ -173,7 +173,7 @@ impl Parser{
  rules[TokenType::TOKEN_LEFT_BRACE as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_RIGHT_BRACE as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_COMMA as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_DOT as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_DOT as usize] = ParseRule{prefix: None, infix: Some(Parser::dot), precedence: Precedence::PREC_CALL};
  rules[TokenType::TOKEN_MINUS as usize] = ParseRule{prefix: Some(Parser::unary), infix: Some(Parser::binary), precedence: Precedence::PREC_TERM};
  rules[TokenType::TOKEN_PLUS as usize] = ParseRule{prefix: None, infix: Some(Parser::binary), precedence: Precedence::PREC_TERM};
  rules[TokenType::TOKEN_SEMICOLON as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
@@ -522,6 +522,17 @@ impl Parser{
         // parse the arguments, and then emit call opcode
         let argCount = self.argumentList(scanner);
         self.emitByte(OpCode::OP_CALL(argCount as usize));
+    }
+
+    fn dot(&mut self, scanner: &mut Scanner, _canAssign: bool){
+        self.consume(TokenType::TOKEN_IDENTIFIER, "Expect property name after '.'.".to_string(), scanner);
+        let name = self.identifierConstant(self.previous.clone());
+        if _canAssign && self.Match(scanner, TokenType::TOKEN_EQUAL){
+            self.expression(scanner);
+            self.emitByte(OpCode::OP_SET_PROPERTY(name));
+        } else{
+            self.emitByte(OpCode::OP_GET_PROPERTY(name));
+        }
     }
 
     fn unary(&mut self, scanner: &mut Scanner, _canAssign: bool){

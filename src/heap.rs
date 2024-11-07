@@ -24,6 +24,13 @@ impl heapData{
     pub fn as_class(&self) -> Option<&LoxClass>{ if let heapData::Class(s) = self {Some(s)} else {None}}
     pub fn as_instance(&self) -> Option<&LoxInstance>{ if let heapData::Instance(s) = self {Some(s)} else {None}}
 
+    pub fn as_mut_str(&mut self) -> Option<&mut String>{ if let heapData::String(s) = self {Some(s)} else {None}}
+    pub fn as_mut_function(&mut self) -> Option<&mut LoxFunction>{ if let heapData::Function(s) = self {Some(s)} else {None}}
+    pub fn as_mut_native(&mut self) -> Option<&mut NativeFn>{ if let heapData::Native(s) = self {Some(s)} else {None}}
+    pub fn as_mut_closure(&mut self) -> Option<&mut LoxClosure>{ if let heapData::Closure(s) = self {Some(s)} else {None}}
+    pub fn as_mut_class(&mut self) -> Option<&mut LoxClass>{ if let heapData::Class(s) = self {Some(s)} else {None}}
+    pub fn as_mut_instance(&mut self) -> Option<&mut LoxInstance>{ if let heapData::Instance(s) = self {Some(s)} else {None}}
+
    fn heapSize(&self) -> u64 {std::mem::size_of_val(self) as u64}
 }
 
@@ -75,5 +82,12 @@ impl Heap{
     pub fn get_closure(&self, id: heapID) -> &LoxClosure{self.values.get(&id).unwrap().data.as_closure().unwrap()}
     pub fn get_class(&self, id: heapID) -> &LoxClass{self.values.get(&id).unwrap().data.as_class().unwrap()}
     pub fn get_instance(&self, id: heapID) -> &LoxInstance{self.values.get(&id).unwrap().data.as_instance().unwrap()}
+
+    pub fn get_mut_str(&mut self, id: heapID) -> &mut String{self.values.get_mut(&id).unwrap().data.as_mut_str().unwrap()}
+    pub fn get_mut_function(&mut self, id: heapID) -> &mut LoxFunction{self.values.get_mut(&id).unwrap().data.as_mut_function().unwrap()}
+    pub fn get_mut_native(&mut self, id: heapID) -> &mut NativeFn{self.values.get_mut(&id).unwrap().data.as_mut_native().unwrap()}
+    pub fn get_mut_closure(&mut self, id: heapID) -> &mut LoxClosure{self.values.get_mut(&id).unwrap().data.as_mut_closure().unwrap()}
+    pub fn get_mut_class(&mut self, id: heapID) -> &mut LoxClass{self.values.get_mut(&id).unwrap().data.as_mut_class().unwrap()}
+    pub fn get_mut_instance(&mut self, id: heapID) -> &mut LoxInstance{self.values.get_mut(&id).unwrap().data.as_mut_instance().unwrap()}
 
 }

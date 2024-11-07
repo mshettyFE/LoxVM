@@ -195,6 +195,47 @@ impl VM {
                     } else {panic!()}
                 },
 
+                OpCode::OP_GET_PROPERTY(index) => {
+                    if let Value::VAL_INSTANCE(id) = self.stk.peek(0).unwrap() {
+                        if let Value::VAL_STRING(str_id) = self.read_constant(index){
+                            let inst = self.gc.get_instance(id);
+                            let name = self.gc.get_str(str_id);
+                            self.stk.pop();
+                            match inst.fields.get(name){
+                                Some(field_val) => self.stk.push(field_val.clone()),
+                                None => return InterpretResult::INTERPRET_RUNTIME_ERROR(
+                                    self.formatRunTimeError(format_args!("Undefined property {}", name.clone())))
+                            }
+                        } else {panic!()}
+                    } else {
+                        return InterpretResult::INTERPRET_RUNTIME_ERROR(
+                                    self.formatRunTimeError(format_args!("Only instances have properties")))
+                    }
+                },
+
+                OpCode::OP_SET_PROPERTY(index) =>{
+                    
+                    let name = match  self.read_constant(index){
+                        Value::VAL_STRING(str_id) => self.gc.get_str(str_id).clone(),
+                        _ => panic!()
+                    };
+
+                    if let Value::VAL_INSTANCE(id) = self.stk.peek(1).unwrap() {
+                            let inst = self.gc.get_mut_instance(id);
+                            if inst.fields.contains_key(&name){
+                                inst.fields.insert(name.clone(),self.stk.peek(0).unwrap());
+                                let val = self.stk.pop().unwrap();
+                                self.stk.pop();
+                                self.stk.push(val);
+                            }
+                    }
+                    else {
+                        return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("Only instances have fields")))
+                    }
+                }
+
+
+
                 OpCode::OP_RETURN => { // return from function
                     let result = self.stk.pop();
                     for idx in self.getCurrentFrame().starting_index..self.stk.size(){

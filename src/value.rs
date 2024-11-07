@@ -89,7 +89,7 @@ pub struct LoxClass{
 
 pub struct LoxInstance{
     pub klass: LoxClass,
-    fields: HashMap<String, Value>
+    pub fields: HashMap<String, Value>
 }
 
 impl LoxInstance{
