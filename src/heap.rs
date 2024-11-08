@@ -9,7 +9,8 @@ enum heapData{
     Native(NativeFn),
     Closure(LoxClosure),
     Class(LoxClass),
-    Instance(LoxInstance)
+    Instance(LoxInstance),
+    BoundMethod(LoxBoundMethod)
 }
 
 pub trait HeapSize{
@@ -23,6 +24,7 @@ impl heapData{
     pub fn as_closure(&self) -> Option<&LoxClosure>{ if let heapData::Closure(s) = self {Some(s)} else {None}}
     pub fn as_class(&self) -> Option<&LoxClass>{ if let heapData::Class(s) = self {Some(s)} else {None}}
     pub fn as_instance(&self) -> Option<&LoxInstance>{ if let heapData::Instance(s) = self {Some(s)} else {None}}
+    pub fn as_bound_method(&self) -> Option<&LoxBoundMethod>{ if let heapData::BoundMethod(s) = self {Some(s)} else {None}}
 
     pub fn as_mut_str(&mut self) -> Option<&mut String>{ if let heapData::String(s) = self {Some(s)} else {None}}
     pub fn as_mut_function(&mut self) -> Option<&mut LoxFunction>{ if let heapData::Function(s) = self {Some(s)} else {None}}
@@ -30,6 +32,7 @@ impl heapData{
     pub fn as_mut_closure(&mut self) -> Option<&mut LoxClosure>{ if let heapData::Closure(s) = self {Some(s)} else {None}}
     pub fn as_mut_class(&mut self) -> Option<&mut LoxClass>{ if let heapData::Class(s) = self {Some(s)} else {None}}
     pub fn as_mut_instance(&mut self) -> Option<&mut LoxInstance>{ if let heapData::Instance(s) = self {Some(s)} else {None}}
+    pub fn as_mut_bound_method(&mut self) -> Option<&mut LoxBoundMethod>{ if let heapData::BoundMethod(s) = self {Some(s)} else {None}}
 
    fn heapSize(&self) -> u64 {std::mem::size_of_val(self) as u64}
 }
@@ -62,6 +65,7 @@ impl Heap{
     pub fn manage_closure(&mut self, s: LoxClosure) -> heapID{self.add_data(heapData::Closure(s))}
     pub fn manage_class(&mut self, s: LoxClass) -> heapID{self.add_data(heapData::Class(s))}
     pub fn manage_instance(&mut self, s: LoxInstance) -> heapID{self.add_data(heapData::Instance(s))}
+    pub fn manage_bound_method(&mut self, s: LoxBoundMethod) -> heapID{self.add_data(heapData::BoundMethod(s))}
 
     fn generate_id(&mut self) -> heapID {
         let a = self.NextID;
@@ -82,6 +86,7 @@ impl Heap{
     pub fn get_closure(&self, id: heapID) -> &LoxClosure{self.values.get(&id).unwrap().data.as_closure().unwrap()}
     pub fn get_class(&self, id: heapID) -> &LoxClass{self.values.get(&id).unwrap().data.as_class().unwrap()}
     pub fn get_instance(&self, id: heapID) -> &LoxInstance{self.values.get(&id).unwrap().data.as_instance().unwrap()}
+    pub fn get_bound_method(&self, id: heapID) -> &LoxBoundMethod{self.values.get(&id).unwrap().data.as_bound_method().unwrap()}
 
     pub fn get_mut_str(&mut self, id: heapID) -> &mut String{self.values.get_mut(&id).unwrap().data.as_mut_str().unwrap()}
     pub fn get_mut_function(&mut self, id: heapID) -> &mut LoxFunction{self.values.get_mut(&id).unwrap().data.as_mut_function().unwrap()}
@@ -89,5 +94,6 @@ impl Heap{
     pub fn get_mut_closure(&mut self, id: heapID) -> &mut LoxClosure{self.values.get_mut(&id).unwrap().data.as_mut_closure().unwrap()}
     pub fn get_mut_class(&mut self, id: heapID) -> &mut LoxClass{self.values.get_mut(&id).unwrap().data.as_mut_class().unwrap()}
     pub fn get_mut_instance(&mut self, id: heapID) -> &mut LoxInstance{self.values.get_mut(&id).unwrap().data.as_mut_instance().unwrap()}
+    pub fn get_mut_bound_method(&mut self, id: heapID) -> &mut LoxBoundMethod{self.values.get_mut(&id).unwrap().data.as_mut_bound_method().unwrap()}
 
 }

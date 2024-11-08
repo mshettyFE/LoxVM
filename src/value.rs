@@ -16,7 +16,8 @@ pub enum LoxType{
     NATIVE,
     CLOSURE,
     CLASS,
-    INSTANCE
+    INSTANCE,
+    METHOD
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -84,7 +85,8 @@ pub type NativeFn = fn(usize, usize) -> Value;
 
 #[derive(Clone,Debug)]
 pub struct LoxClass{
-    pub name: String
+    pub name: String,
+    pub methods: HashMap<String, Value>
 }
 
 #[derive(Clone,Debug)]
@@ -102,6 +104,18 @@ impl LoxInstance{
     }
 }
 
+#[derive(Clone)]
+pub struct LoxBoundMethod{
+    pub receiver: Value,
+    pub method: LoxClosure
+}
+
+impl LoxBoundMethod{
+    pub fn new(new_rec: Value,  new_method: LoxClosure) -> Self {
+        LoxBoundMethod { receiver: new_rec, method: new_method }
+    }
+}
+
 // Represents the possible values which the VM can hold
 #[derive(Clone,Debug)]
 pub enum Value {
@@ -113,7 +127,8 @@ pub enum Value {
     VAL_NATIVE(NativeFn),
     VAL_CLOSURE(heapID),
     VAL_CLASS(heapID),
-    VAL_INSTANCE(heapID)
+    VAL_INSTANCE(heapID),
+    VAL_BOUND_METHOD(heapID)
 }
 
 impl Value {
@@ -131,6 +146,7 @@ impl Value {
             Value::VAL_CLOSURE(id) => { print!("{}", heap.get_closure(*id).function.name )},
             Value::VAL_CLASS(id) => { print!("{}", heap.get_class(*id).name )},
             Value::VAL_INSTANCE(id) => { print!("{} instance", heap.get_instance(*id).klass.name )},
+            Value::VAL_BOUND_METHOD(id) => { print!("fn {}", heap.get_bound_method(*id).method.function.name )},
        }
     }
 
@@ -144,7 +160,8 @@ impl Value {
             Value::VAL_NATIVE(_) => LoxType::NATIVE,
             Value::VAL_CLOSURE(_) => LoxType::CLOSURE,
             Value::VAL_CLASS(_) => LoxType::CLASS,
-            Value::VAL_INSTANCE(_) => LoxType::INSTANCE
+            Value::VAL_INSTANCE(_) => LoxType::INSTANCE,
+            Value::VAL_BOUND_METHOD(_) => LoxType::METHOD
         }
     }
 }

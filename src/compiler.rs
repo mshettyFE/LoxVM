@@ -12,6 +12,7 @@ const TOTAL_RULES: usize = 40;
 #[derive(PartialEq)]
 pub enum FunctionType {
     TYPE_FUNCTION,
+    TYPE_METHOD,
     TYPE_SCRIPT,
 }
 
@@ -27,22 +28,36 @@ pub struct Compiler {
 impl Compiler {
     pub fn new(new_ftype: FunctionType, fname: String) -> Self{
        match new_ftype{
-            // Most functions calls go here. You give Names to your functions
             FunctionType::TYPE_FUNCTION => {
+                let temp_token = Token{ttype: TokenType::TOKEN_THIS, start: "".to_string(), line: 0};
+                let new_locals = vec![Locals::new( temp_token, Some(0))];
                 Compiler{
                     function: LoxFunction::new(0, fname),
                     ftype: new_ftype,
-                    locals: Vec::new(),
+                    locals: new_locals,
                     scopeDepth: 0,
                     upvalues: Vec::new()
                 }
             },
             // the "main" function goes here
             FunctionType::TYPE_SCRIPT => {
+                let temp_token = Token{ttype: TokenType::TOKEN_THIS, start: "".to_string(), line: 0};
+                let new_locals = vec![Locals::new( temp_token, Some(0))];
                 Compiler{
                     function: LoxFunction::new(0, "script".to_string()),
                     ftype: new_ftype,
-                    locals: Vec::new(),
+                    locals: new_locals,
+                    scopeDepth: 0,
+                    upvalues: Vec::new()
+                }
+            },
+            FunctionType::TYPE_METHOD => {
+                let temp_token = Token{ttype: TokenType::TOKEN_THIS, start: "this".to_string(), line: 0};
+                let new_locals = vec![Locals::new( temp_token, Some(0))];
+                Compiler{
+                    function: LoxFunction::new(0, fname),
+                    ftype: new_ftype,
+                    locals: new_locals,
                     scopeDepth: 0,
                     upvalues: Vec::new()
                 }
@@ -81,12 +96,17 @@ impl Locals {
     }
 }
 
+pub struct ClassCompilerNode{
+    pub name: Token
+}
+
 // the beating heart of the interpreter
 // requests tokens as needed from a scanner, then converts them too bytecode
 // It's basically as single pass compiler
 pub struct Parser{
     compilerStack: Vec<Compiler>, // current chunk being executed. Could represent a function, or
                                     // a group of statements
+    ClassStack: Vec<ClassCompilerNode>, 
     // the tokens under consideration
     current: Token,                 
     previous: Token,
@@ -202,7 +222,7 @@ impl Parser{
  rules[TokenType::TOKEN_PRINT as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_RETURN as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_SUPER as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_THIS as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_THIS as usize] = ParseRule{prefix: Some(Parser::this), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_TRUE as usize] = ParseRule{prefix: Some(Parser::literal), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_VAR as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_WHILE as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
@@ -212,7 +232,8 @@ impl Parser{
     let mut a: Vec<Compiler> = Vec::new(); 
     a.push(Compiler::new(FunctionType::TYPE_SCRIPT, "script".to_string()));
  
- Parser{compilerStack: a, 
+ Parser{compilerStack: a,
+        ClassStack: Vec::new(), 
         previous: Token {ttype: TokenType::TOKEN_ERROR, start: "".to_string(), line: 0 },
         current: Token { ttype: TokenType::TOKEN_ERROR, start: "".to_string(), line: 0 },
         hadError: false,
@@ -381,14 +402,28 @@ impl Parser{
 
     fn classDeclaration(&mut self, scanner: &mut Scanner){
         self.consume(TokenType::TOKEN_IDENTIFIER, "Expect class name".to_string(), scanner);
+        let className = self.previous.clone();
         let nameConstant = self.identifierConstant(self.previous.clone());
         self.declareVariable();
 
         self.emitByte(OpCode::OP_CLASS(nameConstant));
         self.defineVariable(nameConstant);
 
+        self.ClassStack.push(ClassCompilerNode{name: self.previous.clone()});
+
+        self.namedVariable(className, scanner, false);
+
         self.consume(TokenType::TOKEN_LEFT_BRACE, "Expect '{' before class body.".to_string(), scanner);
+        loop{
+            let condition = self.check(TokenType::TOKEN_RIGHT_BRACE) || self.check(TokenType::TOKEN_EOF);
+            if condition {break;}
+            self.method(scanner);
+        }
+
         self.consume(TokenType::TOKEN_RIGHT_BRACE, "Expect '}' before class body.".to_string(), scanner);
+        self.emitByte(OpCode::OP_POP);
+
+        self.ClassStack.pop();
     }
     
     fn printStatement(&mut self, scanner: &mut Scanner){
@@ -596,6 +631,14 @@ impl Parser{
             TokenType::TOKEN_NIL => {self.emitByte(OpCode::OP_NIL); ()},
             _ => {()}
         } 
+    }
+
+    fn this(&mut self, scanner: &mut Scanner, _canAssign: bool){
+        if self.ClassStack.len() == 0 {
+            self.errorAt("Can't use 'this' outside of a class".to_string(), ErrorTokenLoc::PREVIOUS);
+            return;
+        }
+        self.variable(scanner, false);
     }
 
     fn string(&mut self, _scanner: &mut Scanner, _canAssign: bool){
@@ -999,6 +1042,13 @@ impl Parser{
         let new_val = Constant::FUNCTION(comp.function);
         let b = self.makeConstant(new_val);
         self.emitByte(OpCode::OP_CLOSURE(b as usize, comp.upvalues) );
+    }
+
+    fn method(&mut self, scanner: &mut Scanner){
+        self.consume(TokenType::TOKEN_IDENTIFIER, "Expect method name.".to_string(), scanner);
+        let constant = self.identifierConstant(self.previous.clone());
+        self.function(FunctionType::TYPE_METHOD, scanner);
+        self.emitByte(OpCode::OP_METHOD(constant));
     }
 
     fn beginScope(&mut self){

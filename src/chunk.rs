@@ -36,6 +36,7 @@ pub enum OpCode {
     OP_CLASS(usize),
     OP_GET_PROPERTY(usize),
     OP_SET_PROPERTY(usize),
+    OP_METHOD(usize),
     OP_RETURN,
 }
 
@@ -60,6 +61,7 @@ impl OpCode{
             OpCode::OP_CLASS(_) => 2,
             OpCode::OP_GET_PROPERTY(_) => 2,
             OpCode::OP_SET_PROPERTY(_) => 2,
+            OpCode::OP_METHOD(_) => 2,
             _ => 1
         };
         out
@@ -175,6 +177,7 @@ impl Chunk {
                     OpCode::OP_CLASS(index) => self.constant_instruction("OP_CLASS", *index)?,
                     OpCode::OP_GET_PROPERTY(index) => self.constant_instruction("OP_GET_PROPERTY", *index)?,
                     OpCode::OP_SET_PROPERTY(index) => self.constant_instruction("OP_SET_PROPERTY", *index)?,
+                    OpCode::OP_METHOD(index) => self.constant_instruction("OP_METHOD", *index)?,
                     OpCode::OP_ADD => self.simple_instruction("OP_ADD")?,
                     OpCode::OP_SUBTRACT => self.simple_instruction("OP_SUBTRACT")?,
                     OpCode::OP_MULTIPLY => self.simple_instruction("OP_MULTIPLY")?,

@@ -190,7 +190,7 @@ impl VM {
                 OpCode::OP_CLASS(index) => {
                     if let Value::VAL_STRING(str_id) =  self.read_constant(index){
                         let class_name = self.gc.get_str(str_id);
-                        let class_id = self.gc.manage_class(LoxClass{name: class_name.clone()});
+                        let class_id = self.gc.manage_class(LoxClass{name: class_name.clone(), methods: HashMap::new()});
                         self.stk.push(Value::VAL_CLASS(class_id));
                     } else {panic!()}
                 },
@@ -203,10 +203,14 @@ impl VM {
                             self.stk.pop();
                             match inst.fields.get(name){
                                 Some(field_val) => self.stk.push(field_val.clone()),
-                                None => return InterpretResult::INTERPRET_RUNTIME_ERROR(
-                                    self.formatRunTimeError(format_args!("Undefined property {}", name.clone())))
+                                None => {
+                                    match self.bindMethod(inst.klass.clone(), name.clone()){
+                                        Ok(()) => {},
+                                        Err(str) => return InterpretResult::INTERPRET_RUNTIME_ERROR(str)
+                                    }
+                                }
                             }
-                        } else {panic!()}
+                       } else {panic!()}
                     } else {
                         return InterpretResult::INTERPRET_RUNTIME_ERROR(
                                     self.formatRunTimeError(format_args!("Only instances have properties")))
@@ -234,7 +238,12 @@ impl VM {
                     }
                 }
 
-
+                OpCode::OP_METHOD(index) =>{
+                    if let Value::VAL_STRING(str_id) =  self.read_constant(index) {
+                        let method_name = self.gc.get_str(str_id);
+                        self.defineMethod(method_name.clone());
+                    }
+                }
 
                 OpCode::OP_RETURN => { // return from function
                     let result = self.stk.pop();
@@ -273,11 +282,11 @@ impl VM {
                     self.stk.pop();
                }
                OpCode::OP_GET_LOCAL(index) => { // get local variable, and push to stack
-                   let index = self.getCurrentFrame().starting_index + index +1;
+                   let index = self.getCurrentFrame().starting_index + index;
                     self.stk.push(self.stk.get(index).unwrap());
                }
                OpCode::OP_SET_LOCAL(index) => { // get location of variable in stack, then update value
-                   let index = self.getCurrentFrame().starting_index + index +1;
+                   let index = self.getCurrentFrame().starting_index + index;
                     self.stk.set(index, self.stk.peek(0).unwrap());
                }
                OpCode::OP_GET_GLOBAL(name_index) => { // get value of global variable from the global hash
@@ -401,8 +410,10 @@ impl VM {
                    if a.get_type() == b.get_type() {
                         let new_val = match a.get_type(){
                             LoxType::STRING => {
-                                if let Value::VAL_STRING(a_val) = a{
-                                    if let Value::VAL_STRING(b_val) = b{
+                                if let Value::VAL_STRING(a_val_id) = a{
+                                    if let Value::VAL_STRING(b_val_id) = b{
+                                        let a_val = self.gc.get_str(a_val_id);
+                                        let b_val = self.gc.get_str(b_val_id);
                                         let new_str = format!("{}{}", b_val, a_val);
                                         let id = self.gc.manage_str(new_str);
                                         Value::VAL_STRING(id)
@@ -460,6 +471,11 @@ impl VM {
         // This is a wrapper around Call. It does type checking on the input Value to make sure
         // it's a callable
         match callee {
+            Value::VAL_BOUND_METHOD(id) => {
+                let bm = self.gc.get_bound_method(id);
+                self.stk.set(self.stk.size()-argCount-1, bm.receiver.clone());
+                return self.Call(bm.method.clone(), argCount);
+            }
             Value::VAL_CLASS(id) =>{
                 let class = self.gc.get_class(id);
                 let instance_index = self.stk.size()-argCount-1;
@@ -486,6 +502,25 @@ impl VM {
                 return Err("Can only call functions and classes.".to_string());
             }
         }
+    }
+
+    fn bindMethod(&mut self, klass: LoxClass, name: String) -> Result<(), String>{
+        let method = match klass.methods.get(&name){
+            Some(value) => value,
+            None => {
+                let str = self.formatRunTimeError(format_args!("Undefined property {}", name));
+                return Err(str)
+            }
+        };
+
+        let cls =  match method {
+            Value::VAL_CLOSURE(id) => self.gc.get_closure(*id),
+            _ => panic!()
+        };
+        let bm_id = self.gc.manage_bound_method(LoxBoundMethod::new(self.stk.peek(0).unwrap(), cls.clone()));
+        self.stk.pop();
+        self.stk.push(Value::VAL_BOUND_METHOD(bm_id));
+        return Ok(());
     }
 
     fn closeUpvalue(&mut self, index: usize){
@@ -600,6 +635,18 @@ impl VM {
         self.stk.push(Value::VAL_NATIVE(function));
         self.globals.insert( name, self.stk.get(1).unwrap());
         self.stk.pop();
+        self.stk.pop();
+    }
+
+    fn defineMethod(&mut self, name: String){
+        let method = self.stk.peek(0).unwrap();
+        let klass = match self.stk.peek(1){
+            Some(Value::VAL_CLASS(id)) => {
+                self.gc.get_mut_class(id)
+            },
+            _ => panic!()
+        };
+        klass.methods.insert(name, method);
         self.stk.pop();
     }
 
