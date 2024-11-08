@@ -158,7 +158,7 @@ impl VM {
                    let upvalue_copy = self.getCurrentFrame().closure.upvalues[index].borrow().clone();
                    match upvalue_copy{
                      Upvalue::Open(idx) => {
-                         self.stk.push(self.stk.get( idx+1).unwrap())
+                         self.stk.push(self.stk.get( idx).unwrap())
                      },
                      Upvalue::Closed(val) => {
                          self.stk.push(val.clone())
@@ -175,7 +175,7 @@ impl VM {
                     let uv = self.getCurrentFrame().closure.upvalues[index].borrow().clone();
                     match uv{
                         Upvalue::Open(idx) => {
-                            self.stk.set( idx+1, val)
+                            self.stk.set( idx, val)
                         },
                         Upvalue::Closed(_) => {
                             self.getCurrentFrame().closure.upvalues[index] = Rc::new(RefCell::new(Upvalue::Closed(val)))
@@ -200,9 +200,11 @@ impl VM {
                         if let Value::VAL_STRING(str_id) = self.read_constant(index){
                             let inst = self.gc.get_instance(id);
                             let name = self.gc.get_str(str_id);
-                            self.stk.pop();
                             match inst.fields.get(name){
-                                Some(field_val) => self.stk.push(field_val.clone()),
+                                Some(field_val) => {
+                                    self.stk.pop();
+                                    self.stk.push(field_val.clone());
+                                },
                                 None => {
                                     match self.bindMethod(inst.klass.clone(), name.clone()){
                                         Ok(()) => {},
@@ -473,7 +475,7 @@ impl VM {
         match callee {
             Value::VAL_BOUND_METHOD(id) => {
                 let bm = self.gc.get_bound_method(id);
-                self.stk.set(self.stk.size()-argCount-1, bm.receiver.clone());
+                self.stk.set(self.stk.size()-argCount-1, Value::VAL_INSTANCE(bm.receiver.clone()) );
                 return self.Call(bm.method.clone(), argCount);
             }
             Value::VAL_CLASS(id) =>{
@@ -482,7 +484,6 @@ impl VM {
                 let instance_id = self.gc.manage_instance(LoxInstance::new(class.clone()));
                 self.stk.set(instance_index, Value::VAL_INSTANCE(instance_id));
                 return Ok(());
-
             }
             Value::VAL_CLOSURE(id) => {
                 let cls = self.gc.get_closure(id);
@@ -517,14 +518,20 @@ impl VM {
             Value::VAL_CLOSURE(id) => self.gc.get_closure(*id),
             _ => panic!()
         };
-        let bm_id = self.gc.manage_bound_method(LoxBoundMethod::new(self.stk.peek(0).unwrap(), cls.clone()));
-        self.stk.pop();
-        self.stk.push(Value::VAL_BOUND_METHOD(bm_id));
+        match self.stk.peek(0).unwrap(){
+            Value::VAL_INSTANCE(id) => {
+                let bm_id = self.gc.manage_bound_method(
+                LoxBoundMethod::new(id, cls.clone()));
+                self.stk.pop();
+                self.stk.push(Value::VAL_BOUND_METHOD(bm_id));
+            },
+            _ => panic!()
+        }
         return Ok(());
     }
 
     fn closeUpvalue(&mut self, index: usize){
-        let value = match self.stk.get(index+1){
+        let value = match self.stk.get(index){
             Some(v) => v,
             None => return 
         };

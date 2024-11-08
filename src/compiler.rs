@@ -62,8 +62,7 @@ impl Compiler {
                     upvalues: Vec::new()
                 }
             }
-        }
-       
+        }       
     }
 
     pub fn beginScope(&mut self){

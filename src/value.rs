@@ -106,13 +106,13 @@ impl LoxInstance{
 
 #[derive(Clone)]
 pub struct LoxBoundMethod{
-    pub receiver: Value,
+    pub receiver: heapID,
     pub method: LoxClosure
 }
 
 impl LoxBoundMethod{
-    pub fn new(new_rec: Value,  new_method: LoxClosure) -> Self {
-        LoxBoundMethod { receiver: new_rec, method: new_method }
+    pub fn new(new_rec_id: heapID,  new_method: LoxClosure) -> Self {
+        LoxBoundMethod { receiver: new_rec_id, method: new_method }
     }
 }
 
@@ -143,10 +143,10 @@ impl Value {
             Value::VAL_STRING(id) => print!("{}", heap.get_str(*id)),
             Value::VAL_FUNCTION(id) => print!("<fn {}>", heap.get_function(*id).name ),
             Value::VAL_NATIVE(_) => print!("<native fn>"),
-            Value::VAL_CLOSURE(id) => { print!("{}", heap.get_closure(*id).function.name )},
+            Value::VAL_CLOSURE(id) => { print!("<fn {}>", heap.get_closure(*id).function.name )},
             Value::VAL_CLASS(id) => { print!("{}", heap.get_class(*id).name )},
             Value::VAL_INSTANCE(id) => { print!("{} instance", heap.get_instance(*id).klass.name )},
-            Value::VAL_BOUND_METHOD(id) => { print!("fn {}", heap.get_bound_method(*id).method.function.name )},
+            Value::VAL_BOUND_METHOD(id) => { print!("<fn {}>", heap.get_bound_method(*id).method.function.name )},
        }
     }
 
