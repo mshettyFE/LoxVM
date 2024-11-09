@@ -1,7 +1,8 @@
 #![allow(non_camel_case_types)]
 
 use std::collections::HashMap;
-use crate::heap::Heap;
+use std::error::Error;
+use crate::heap::{heapID, Heap};
 use crate::{chunk::OpCode, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -39,7 +40,8 @@ pub struct VM{
     gc: Heap,       // heap allocated things
     globals: HashMap<String, Value>,  // global vars
     parser: Parser, // Bundled here b/c Rust is paranoid
-    upvalues: Vec<Rc<RefCell<Upvalue>>> // list of pointers to upvalues
+    upvalues: Vec<Rc<RefCell<Upvalue>>>, // list of pointers to upvalues
+    initString: String
 }
 
 pub fn clockNative(_argC: usize, _value_index: usize) -> Value{
@@ -55,7 +57,8 @@ impl VM {
         stk: LoxStack::new(),
         gc: Heap::new(),
         parser: Parser::new(),
-        upvalues: Vec::new()
+        upvalues: Vec::new(),
+        initString: "init".to_string()
         };
 
         // native functions get defined here
@@ -95,7 +98,6 @@ impl VM {
               if *DEBUG_TRACE_EXEC.get().unwrap(){
                self.stk.print(&self.gc);
                let frame = self.getCurrentFrame();
-                //println!("{}", frame.ip);
                frame.closure.function.chunk.disassemble_instruction(frame.ip-1, frame.ip-1).unwrap();
              }
             {
@@ -245,8 +247,18 @@ impl VM {
                         let method_name = self.gc.get_str(str_id);
                         self.defineMethod(method_name.clone());
                     }
-                }
+                },
 
+                OpCode::OP_INVOKE(constant_index, argCount ) => {
+                    let method = match self.read_constant(constant_index){
+                        Value::VAL_STRING(id) => self.gc.get_str(id),
+                        _ => panic!()
+                    };
+                    match self.invoke(method.clone(), argCount) {
+                        Ok(()) => {},
+                        Err(str) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str))) 
+                    }
+                },
                 OpCode::OP_RETURN => { // return from function
                     let result = self.stk.pop();
                     for idx in self.getCurrentFrame().starting_index..self.stk.size(){
@@ -469,6 +481,23 @@ impl VM {
         }
     }
 
+    fn callClassMethod(&mut self, cls: LoxClass, instance_index: usize, argCount: usize) -> Result<(), String>{
+            self.stk.set(instance_index, Value::VAL_INSTANCE(self.gc.manage_instance( LoxInstance::new(cls.clone()) )));
+            let closure = match cls.methods.get(&self.initString) {
+                    Some(Value::VAL_CLOSURE(id)) =>  Some(self.gc.get_closure(*id)),
+                    _ => None
+            }; 
+            match closure {
+                    Some(cls) => return self.Call(cls.clone(), argCount),
+                    None => 
+                        if(argCount == 0) {
+                            return Ok(())
+                        } else {
+                            return Err(self.formatRunTimeError(format_args!("Expected 0 arguments but got {}.", argCount)));
+                        }
+            }
+    }
+
     fn callValue(&mut self, callee: Value, argCount: usize)-> Result<(),String>{
         // This is a wrapper around Call. It does type checking on the input Value to make sure
         // it's a callable
@@ -479,17 +508,15 @@ impl VM {
                 return self.Call(bm.method.clone(), argCount);
             }
             Value::VAL_CLASS(id) =>{
-                let class = self.gc.get_class(id);
-                let instance_index = self.stk.size()-argCount-1;
-                let instance_id = self.gc.manage_instance(LoxInstance::new(class.clone()));
-                self.stk.set(instance_index, Value::VAL_INSTANCE(instance_id));
-                return Ok(());
-            }
+                  let class = self.gc.get_class(id);
+                  let instance_index = self.stk.size()-argCount-1;
+                  self.callClassMethod(class.clone(), instance_index, argCount)
+                }
             Value::VAL_CLOSURE(id) => {
                 let cls = self.gc.get_closure(id);
                 return self.Call( cls.clone(), argCount);
             },
-           Value::VAL_NATIVE(native_func) => {
+            Value::VAL_NATIVE(native_func) => {
                         let fn_start = self.stk.size()- argCount as usize;
                         // execute the native function and  push the result onto the VM stack
                         let result = native_func(argCount as usize, fn_start);
@@ -503,6 +530,45 @@ impl VM {
                 return Err("Can only call functions and classes.".to_string());
             }
         }
+    }
+
+    fn invoke(&mut self, name: String, argCount: usize) -> Result<(), String>{
+        let receiver = self.stk.peek(argCount).unwrap();
+        match receiver {
+            Value::VAL_INSTANCE(id) => {
+                let inst = self.gc.get_instance(id);
+                match inst.fields.get(&name){
+                    Some(val) => {
+                        let stk_idx = self.stk.size()-argCount-1;
+                        self.stk.set(stk_idx, val.clone());
+                        return self.callValue(self.stk.get(stk_idx).unwrap(), argCount);
+                    },
+                    None => {
+                        return self.invokeFromClass(inst.klass.clone(), name, argCount);
+                    }
+                }
+            },
+            _ => {
+                return Err(self.formatRunTimeError(format_args!("Only instances have methods")));
+            }
+        }
+    }
+
+    fn invokeFromClass(&mut self, class: LoxClass, name: String, argCount: usize) -> Result<(), String>{
+        match class.methods.get(&name) {
+            Some(method) => {
+                match method {
+                    Value::VAL_CLOSURE(id ) => {
+                        let closure = self.gc.get_closure(*id);
+                        return self.Call(closure.clone(), argCount);
+                    }
+                    _ => panic!()
+                }
+            },
+            None => {
+                return Err( self.formatRunTimeError( format_args!("Undefined property {}", name) ));
+            }
+        } 
     }
 
     fn bindMethod(&mut self, klass: LoxClass, name: String) -> Result<(), String>{

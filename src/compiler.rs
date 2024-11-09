@@ -14,6 +14,7 @@ pub enum FunctionType {
     TYPE_FUNCTION,
     TYPE_METHOD,
     TYPE_SCRIPT,
+    TYPE_INITIALIZER
 }
 
 
@@ -27,10 +28,18 @@ pub struct Compiler {
 
 impl Compiler {
     pub fn new(new_ftype: FunctionType, fname: String) -> Self{
-       match new_ftype{
-            FunctionType::TYPE_FUNCTION => {
+       let new_locals = match new_ftype{
+           FunctionType::TYPE_FUNCTION => {
                 let temp_token = Token{ttype: TokenType::TOKEN_THIS, start: "".to_string(), line: 0};
-                let new_locals = vec![Locals::new( temp_token, Some(0))];
+                vec![Locals::new( temp_token, Some(0))]
+           },
+           _ => {
+                let temp_token = Token{ttype: TokenType::TOKEN_THIS, start: "this".to_string(), line: 0};
+                vec![Locals::new( temp_token, Some(0))]
+           }
+       };
+       match new_ftype{
+            FunctionType::TYPE_FUNCTION | FunctionType::TYPE_METHOD | FunctionType::TYPE_INITIALIZER => {
                 Compiler{
                     function: LoxFunction::new(0, fname),
                     ftype: new_ftype,
@@ -41,8 +50,6 @@ impl Compiler {
             },
             // the "main" function goes here
             FunctionType::TYPE_SCRIPT => {
-                let temp_token = Token{ttype: TokenType::TOKEN_THIS, start: "".to_string(), line: 0};
-                let new_locals = vec![Locals::new( temp_token, Some(0))];
                 Compiler{
                     function: LoxFunction::new(0, "script".to_string()),
                     ftype: new_ftype,
@@ -51,17 +58,6 @@ impl Compiler {
                     upvalues: Vec::new()
                 }
             },
-            FunctionType::TYPE_METHOD => {
-                let temp_token = Token{ttype: TokenType::TOKEN_THIS, start: "this".to_string(), line: 0};
-                let new_locals = vec![Locals::new( temp_token, Some(0))];
-                Compiler{
-                    function: LoxFunction::new(0, fname),
-                    ftype: new_ftype,
-                    locals: new_locals,
-                    scopeDepth: 0,
-                    upvalues: Vec::new()
-                }
-            }
         }       
     }
 
@@ -524,6 +520,9 @@ impl Parser{
         if self.Match(scanner, TokenType::TOKEN_SEMICOLON) {
             self.emitReturn();
         } else {
+            if (self.compilerStack.last().unwrap().ftype == FunctionType::TYPE_INITIALIZER){
+                self.errorAt("Can't return a value from an initializer".to_string(), ErrorTokenLoc::PREVIOUS);            
+            }
             // otherwise, can return top of stack
             self.expression(scanner);
             self.consume(TokenType::TOKEN_SEMICOLON, "Expect ';' after return value".to_string(), scanner);
@@ -564,7 +563,11 @@ impl Parser{
         if _canAssign && self.Match(scanner, TokenType::TOKEN_EQUAL){
             self.expression(scanner);
             self.emitByte(OpCode::OP_SET_PROPERTY(name));
-        } else{
+        } else if self.Match(scanner, TokenType::TOKEN_LEFT_PAREN){
+            let argCount = self.argumentList(scanner);
+            self.emitByte(OpCode::OP_INVOKE(name, argCount as usize));
+        } 
+        else{
             self.emitByte(OpCode::OP_GET_PROPERTY(name));
         }
     }
@@ -898,8 +901,13 @@ impl Parser{
     }
 
     fn emitReturn(&mut self) {
+        let current_comp  = self.compilerStack.last().unwrap();
+        if (current_comp.ftype == FunctionType::TYPE_INITIALIZER) {
+            self.emitByte(OpCode::OP_GET_LOCAL(0));
+        } else {
         // you emit a OP_NIL since you need to cover the case where nothing gets returned
-        self.emitByte(OpCode::OP_NIL);
+            self.emitByte(OpCode::OP_NIL);
+        }
         self.emitByte(OpCode::OP_RETURN);
     }
 
@@ -1046,7 +1054,11 @@ impl Parser{
     fn method(&mut self, scanner: &mut Scanner){
         self.consume(TokenType::TOKEN_IDENTIFIER, "Expect method name.".to_string(), scanner);
         let constant = self.identifierConstant(self.previous.clone());
-        self.function(FunctionType::TYPE_METHOD, scanner);
+        if self.previous.start == "init".to_string() {
+            self.function(FunctionType::TYPE_INITIALIZER, scanner);
+        } else {
+            self.function(FunctionType::TYPE_METHOD, scanner);
+        }
         self.emitByte(OpCode::OP_METHOD(constant));
     }
 

@@ -37,6 +37,7 @@ pub enum OpCode {
     OP_GET_PROPERTY(usize),
     OP_SET_PROPERTY(usize),
     OP_METHOD(usize),
+    OP_INVOKE(usize, usize),
     OP_RETURN,
 }
 
@@ -62,6 +63,7 @@ impl OpCode{
             OpCode::OP_GET_PROPERTY(_) => 2,
             OpCode::OP_SET_PROPERTY(_) => 2,
             OpCode::OP_METHOD(_) => 2,
+            OpCode::OP_INVOKE(_,_) => 3,
             _ => 1
         };
         out
@@ -153,6 +155,15 @@ impl Chunk {
                         }
                        return Ok(());
                     },
+                    OpCode::OP_INVOKE(constant_index, argCount ) => {
+                        print!("OP_INVOKE ({} args) {} ", argCount, constant_index);
+                        match self.constant_array.get(*constant_index).unwrap(){
+                            Constant::NUMBER(num) => print!("{}", num),
+                            Constant::STRING(str) => print!("{}", str),
+                            Constant::FUNCTION(fnc) => print!("{}", fnc.name ),
+                        }
+                        println!();
+                    }
                     OpCode::OP_RETURN => self.simple_instruction("OP_RETURN")?,
                     OpCode::OP_NIL => self.simple_instruction("OP_NIL")?,
                     OpCode::OP_TRUE => self.simple_instruction("OP_TRUE")?,
