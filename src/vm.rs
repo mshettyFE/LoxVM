@@ -1,8 +1,7 @@
 #![allow(non_camel_case_types)]
 
 use std::collections::HashMap;
-use std::error::Error;
-use crate::heap::{heapID, Heap};
+use crate::heap::Heap;
 use crate::{chunk::OpCode, compiler::isFalsey, scanner::Scanner, DEBUG_TRACE_EXEC};
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -115,7 +114,7 @@ impl VM {
                      }
                  }
                 OpCode::OP_LOOP(offset) => {
-                    self.getCurrentFrame().ip -= (offset+1);
+                    self.getCurrentFrame().ip -= offset+1;
                 }
                 OpCode::OP_JUMP(offset) =>{ // unconditional jump
                     self.getCurrentFrame().ip += offset-1;
@@ -534,7 +533,7 @@ impl VM {
             match closure {
                     Some(cls) => return self.Call(cls.clone(), argCount),
                     None => 
-                        if(argCount == 0) {
+                        if argCount == 0 {
                             return Ok(())
                         } else {
                             return Err(self.formatRunTimeError(format_args!("Expected 0 arguments but got {}.", argCount)));

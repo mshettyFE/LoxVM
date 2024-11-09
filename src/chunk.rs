@@ -259,7 +259,7 @@ impl Chunk {
     let mut offset: usize = 0;
     let mut lox_ref: usize = 0;
     while offset < self.get_count() {
-        self.disassemble_instruction(offset, lox_ref);
+        let _ = self.disassemble_instruction(offset, lox_ref);
 //        self.disassemble_instruction(offset, offset);
         lox_ref += self.code.get(offset).unwrap().length();
         offset += 1;

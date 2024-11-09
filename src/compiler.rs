@@ -410,7 +410,7 @@ impl Parser{
         if self.Match(scanner, TokenType::TOKEN_LESS) {
             self.consume(TokenType::TOKEN_IDENTIFIER, "Expect superclass name".to_string(), scanner);
             self.variable(scanner, false);
-            if (className.start == self.previous.start){
+            if className.start == self.previous.start {
                 self.errorAt("A class can't inherit from itself".to_string(), ErrorTokenLoc::PREVIOUS);
             }
             
@@ -540,7 +540,7 @@ impl Parser{
         if self.Match(scanner, TokenType::TOKEN_SEMICOLON) {
             self.emitReturn();
         } else {
-            if (self.compilerStack.last().unwrap().ftype == FunctionType::TYPE_INITIALIZER){
+            if self.compilerStack.last().unwrap().ftype == FunctionType::TYPE_INITIALIZER {
                 self.errorAt("Can't return a value from an initializer".to_string(), ErrorTokenLoc::PREVIOUS);            
             }
             // otherwise, can return top of stack
@@ -663,7 +663,7 @@ impl Parser{
         self.variable(scanner, false);
     }
 
-    fn super_(&mut self, scanner: &mut Scanner, canAssign: bool){
+    fn super_(&mut self, scanner: &mut Scanner, _canAssign: bool){
         if self.ClassStack.len() == 0{
             self.errorAt("Can't use 'super' outside of a class".to_string(), ErrorTokenLoc::PREVIOUS);
         } else if !self.ClassStack.last().unwrap().hasSuperclass{
@@ -942,7 +942,7 @@ impl Parser{
 
     fn emitReturn(&mut self) {
         let current_comp  = self.compilerStack.last().unwrap();
-        if (current_comp.ftype == FunctionType::TYPE_INITIALIZER) {
+        if current_comp.ftype == FunctionType::TYPE_INITIALIZER {
             self.emitByte(OpCode::OP_GET_LOCAL(0));
         } else {
         // you emit a OP_NIL since you need to cover the case where nothing gets returned

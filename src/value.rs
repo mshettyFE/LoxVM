@@ -106,12 +106,12 @@ impl LoxInstance{
 
 #[derive(Clone)]
 pub struct LoxBoundMethod{
-    pub receiver: heapID,
+    pub receiver: HeapID,
     pub method: LoxClosure
 }
 
 impl LoxBoundMethod{
-    pub fn new(new_rec_id: heapID,  new_method: LoxClosure) -> Self {
+    pub fn new(new_rec_id: HeapID,  new_method: LoxClosure) -> Self {
         LoxBoundMethod { receiver: new_rec_id, method: new_method }
     }
 }
@@ -122,13 +122,13 @@ pub enum Value {
     VAL_NIL,
     VAL_BOOL(bool),
     VAL_NUMBER(f64),
-    VAL_STRING(heapID),
-    VAL_FUNCTION(heapID),
+    VAL_STRING(HeapID),
+    VAL_FUNCTION(HeapID),
     VAL_NATIVE(NativeFn),
-    VAL_CLOSURE(heapID),
-    VAL_CLASS(heapID),
-    VAL_INSTANCE(heapID),
-    VAL_BOUND_METHOD(heapID)
+    VAL_CLOSURE(HeapID),
+    VAL_CLASS(HeapID),
+    VAL_INSTANCE(HeapID),
+    VAL_BOUND_METHOD(HeapID)
 }
 
 impl Value {
