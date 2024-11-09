@@ -673,8 +673,14 @@ impl Parser{
         self.consume(TokenType::TOKEN_IDENTIFIER, "Expect superclass method name".to_string(), scanner);
         let name = self.identifierConstant(self.previous.clone());
         self.namedVariable(Token{ttype: TokenType::TOKEN_SUPER, start: "this".to_string(), line: self.previous.line}  , scanner, false);
-        self.namedVariable(Token{ttype: TokenType::TOKEN_SUPER, start: "super".to_string(), line: self.previous.line} , scanner, false);
-        self.emitByte(OpCode::OP_GET_SUPER(name));
+        if self.Match(scanner, TokenType::TOKEN_LEFT_PAREN ){
+            let argCount = self.argumentList(scanner);
+            self.namedVariable(Token{ttype: TokenType::TOKEN_SUPER, start: "super".to_string(), line: self.previous.line}, scanner, false);
+            self.emitByte(OpCode::OP_SUPER_INVOKE(name, argCount as usize));
+        } else {
+            self.namedVariable(Token{ttype: TokenType::TOKEN_SUPER, start: "super".to_string(), line: self.previous.line} , scanner, false);
+            self.emitByte(OpCode::OP_GET_SUPER(name));
+        }
     }
 
     fn string(&mut self, _scanner: &mut Scanner, _canAssign: bool){

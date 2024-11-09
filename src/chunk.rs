@@ -38,6 +38,7 @@ pub enum OpCode {
     OP_SET_PROPERTY(usize),
     OP_METHOD(usize),
     OP_INVOKE(usize, usize),
+    OP_SUPER_INVOKE(usize, usize),
     OP_INHERIT,
     OP_GET_SUPER(usize),
     OP_RETURN,
@@ -66,6 +67,7 @@ impl OpCode{
             OpCode::OP_SET_PROPERTY(_) => 2,
             OpCode::OP_METHOD(_) => 2,
             OpCode::OP_INVOKE(_,_) => 3,
+            OpCode::OP_SUPER_INVOKE(_,_) => 3,
             OpCode::OP_GET_SUPER(_) => 2,
             _ => 1
         };
@@ -158,15 +160,8 @@ impl Chunk {
                         }
                        return Ok(());
                     },
-                    OpCode::OP_INVOKE(constant_index, argCount ) => {
-                        print!("OP_INVOKE ({} args) {} ", argCount, constant_index);
-                        match self.constant_array.get(*constant_index).unwrap(){
-                            Constant::NUMBER(num) => print!("{}", num),
-                            Constant::STRING(str) => print!("{}", str),
-                            Constant::FUNCTION(fnc) => print!("{}", fnc.name ),
-                        }
-                        println!();
-                    }
+                    OpCode::OP_INVOKE(constant_index, argCount ) => self.invoke_instruction("OP_INVOKE", *constant_index, *argCount)?,
+                    OpCode::OP_SUPER_INVOKE(constant_index, argCount ) => self.invoke_instruction("OP_SUPER_INVOKE", *constant_index, *argCount)?,
                     OpCode::OP_RETURN => self.simple_instruction("OP_RETURN")?,
                     OpCode::OP_NIL => self.simple_instruction("OP_NIL")?,
                     OpCode::OP_TRUE => self.simple_instruction("OP_TRUE")?,
@@ -244,6 +239,17 @@ impl Chunk {
     // format: OPCODE name value
     println!("{} {}", name, value_index);
     return Ok(());
+  }
+
+  fn invoke_instruction(&self, name: &str, constant_index: usize, argCount: usize) -> Result<(),String> {
+    print!("{} ({} args) {} ", name, argCount, constant_index);
+        match self.constant_array.get(constant_index).unwrap(){
+            Constant::NUMBER(num) => print!("{}", num),
+            Constant::STRING(str) => print!("{}", str),
+            Constant::FUNCTION(fnc) => print!("{}", fnc.name ),
+        }
+    println!();
+    return Ok(()); 
   }
 
   pub fn disassemble(&self, name: String) -> Result<(), String>{

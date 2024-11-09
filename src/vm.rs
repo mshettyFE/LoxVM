@@ -268,6 +268,21 @@ impl VM {
                         Err(str) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str))) 
                     }
                 },
+                OpCode::OP_SUPER_INVOKE(constant_index, argCount ) => {
+                    let method = match self.read_constant(constant_index){
+                        Value::VAL_STRING(id) => self.gc.get_str(id),
+                        _ => panic!()
+                    };
+                    let super_class = match self.stk.pop().unwrap(){
+                        Value::VAL_CLASS(id) => self.gc.get_class(id),
+                        _ => panic!()
+                    };
+
+                    match self.invokeFromClass(super_class.clone(), method.clone(), argCount) {
+                        Ok(()) => {},
+                        Err(str) => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}",str))) 
+                    }
+                },
                 OpCode::OP_RETURN => { // return from function
                     let result = self.stk.pop();
                     for idx in self.getCurrentFrame().starting_index..self.stk.size(){
