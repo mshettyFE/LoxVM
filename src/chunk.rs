@@ -38,6 +38,8 @@ pub enum OpCode {
     OP_SET_PROPERTY(usize),
     OP_METHOD(usize),
     OP_INVOKE(usize, usize),
+    OP_INHERIT,
+    OP_GET_SUPER(usize),
     OP_RETURN,
 }
 
@@ -64,6 +66,7 @@ impl OpCode{
             OpCode::OP_SET_PROPERTY(_) => 2,
             OpCode::OP_METHOD(_) => 2,
             OpCode::OP_INVOKE(_,_) => 3,
+            OpCode::OP_GET_SUPER(_) => 2,
             _ => 1
         };
         out
@@ -194,6 +197,8 @@ impl Chunk {
                     OpCode::OP_MULTIPLY => self.simple_instruction("OP_MULTIPLY")?,
                     OpCode::OP_DIVIDE => self.simple_instruction("OP_DIVIDE")?,
                     OpCode::OP_NOT => self.simple_instruction("OP_NOT")?,
+                    OpCode::OP_INHERIT => self.simple_instruction("OP_INHERIT")?,
+                    OpCode::OP_GET_SUPER(index) => self.constant_instruction("OP_GET_SUPER", *index)?
                 }
                 return Ok(());
                 }

@@ -92,7 +92,8 @@ impl Locals {
 }
 
 pub struct ClassCompilerNode{
-    pub name: Token
+    pub name: Token,
+    hasSuperclass: bool
 }
 
 // the beating heart of the interpreter
@@ -216,7 +217,7 @@ impl Parser{
  rules[TokenType::TOKEN_OR as usize] = ParseRule{prefix: None, infix: Some(Parser::or), precedence: Precedence::PREC_OR};
  rules[TokenType::TOKEN_PRINT as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_RETURN as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
- rules[TokenType::TOKEN_SUPER as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
+ rules[TokenType::TOKEN_SUPER as usize] = ParseRule{prefix: Some(Parser::super_), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_THIS as usize] = ParseRule{prefix: Some(Parser::this), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_TRUE as usize] = ParseRule{prefix: Some(Parser::literal), infix: None, precedence: Precedence::PREC_NONE};
  rules[TokenType::TOKEN_VAR as usize] = ParseRule{prefix: None, infix: None, precedence: Precedence::PREC_NONE};
@@ -404,8 +405,23 @@ impl Parser{
         self.emitByte(OpCode::OP_CLASS(nameConstant));
         self.defineVariable(nameConstant);
 
-        self.ClassStack.push(ClassCompilerNode{name: self.previous.clone()});
+        self.ClassStack.push(ClassCompilerNode{name: self.previous.clone(), hasSuperclass: false});
 
+        if self.Match(scanner, TokenType::TOKEN_LESS) {
+            self.consume(TokenType::TOKEN_IDENTIFIER, "Expect superclass name".to_string(), scanner);
+            self.variable(scanner, false);
+            if (className.start == self.previous.start){
+                self.errorAt("A class can't inherit from itself".to_string(), ErrorTokenLoc::PREVIOUS);
+            }
+            
+            self.beginScope();
+            let new_local: Locals = Locals::new(Token{ttype: TokenType::TOKEN_SUPER, start: "super".to_string(), line: self.previous.line} , Some(self.compilerStack.last_mut().unwrap().scopeDepth));
+            self.addLocal(new_local);
+            self.defineVariable(0);
+            self.namedVariable(className.clone(), scanner, false);
+            self.emitByte(OpCode::OP_INHERIT);
+            self.ClassStack.last_mut().unwrap().hasSuperclass = true;
+        }
         self.namedVariable(className, scanner, false);
 
         self.consume(TokenType::TOKEN_LEFT_BRACE, "Expect '{' before class body.".to_string(), scanner);
@@ -417,6 +433,10 @@ impl Parser{
 
         self.consume(TokenType::TOKEN_RIGHT_BRACE, "Expect '}' before class body.".to_string(), scanner);
         self.emitByte(OpCode::OP_POP);
+
+        if self.ClassStack.last().unwrap().hasSuperclass{
+            self.endScope();
+        }
 
         self.ClassStack.pop();
     }
@@ -641,6 +661,20 @@ impl Parser{
             return;
         }
         self.variable(scanner, false);
+    }
+
+    fn super_(&mut self, scanner: &mut Scanner, canAssign: bool){
+        if self.ClassStack.len() == 0{
+            self.errorAt("Can't use 'super' outside of a class".to_string(), ErrorTokenLoc::PREVIOUS);
+        } else if !self.ClassStack.last().unwrap().hasSuperclass{
+            self.errorAt("Can't use 'super' in a class with no superclass".to_string(), ErrorTokenLoc::PREVIOUS);
+        }
+        self.consume(TokenType::TOKEN_DOT, "Expect '.' after super '.'".to_string(), scanner);
+        self.consume(TokenType::TOKEN_IDENTIFIER, "Expect superclass method name".to_string(), scanner);
+        let name = self.identifierConstant(self.previous.clone());
+        self.namedVariable(Token{ttype: TokenType::TOKEN_SUPER, start: "this".to_string(), line: self.previous.line}  , scanner, false);
+        self.namedVariable(Token{ttype: TokenType::TOKEN_SUPER, start: "super".to_string(), line: self.previous.line} , scanner, false);
+        self.emitByte(OpCode::OP_GET_SUPER(name));
     }
 
     fn string(&mut self, _scanner: &mut Scanner, _canAssign: bool){

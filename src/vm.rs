@@ -242,6 +242,15 @@ impl VM {
                     }
                 }
 
+                OpCode::OP_INHERIT => {
+                    let superclass = match self.stk.peek(1).unwrap(){
+                        Value::VAL_CLASS(id) => self.gc.get_class(id),
+                        _ => return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("superclass must be a class")))
+                    };
+                   self.copyMethods(superclass.clone());
+                   self.stk.pop(); 
+                }
+
                 OpCode::OP_METHOD(index) =>{
                     if let Value::VAL_STRING(str_id) =  self.read_constant(index) {
                         let method_name = self.gc.get_str(str_id);
@@ -346,6 +355,26 @@ impl VM {
                         _ => { return InterpretResult::INTERPRET_RUNTIME_ERROR(self.formatRunTimeError(format_args!("{}","Tried accessing a global")));}
                     } 
                }
+
+               OpCode::OP_GET_SUPER(name_index) =>{
+                    let name: Value = self.read_constant(name_index);
+                    match name {
+                        Value::VAL_STRING(str_id) => {
+                            let super_name = self.gc.get_str(str_id);
+                            let super_class = match self.stk.pop().unwrap() {
+                                Value::VAL_CLASS(id) => self.gc.get_class(id),
+                                _ => panic!()
+                            };
+                            match self.bindMethod(super_class.clone(), super_name.clone()){
+                                Ok(()) => {},
+                                Err(str) => return InterpretResult::INTERPRET_RUNTIME_ERROR(str)
+                            }
+                       },
+                        _ => panic!() 
+                    } 
+ 
+               }
+
                OpCode::OP_EQUAL => { // check if top two values of stack are equal
                    let a = match self.stk.peek(0){
                         Some(val) => {val},
@@ -721,6 +750,15 @@ impl VM {
         };
         klass.methods.insert(name, method);
         self.stk.pop();
+    }
+
+    pub fn copyMethods(&mut self, superclass: LoxClass){
+        let subclass = match self.stk.peek(0).unwrap(){
+            Value::VAL_CLASS(id) => self.gc.get_mut_class(id),
+            _ => panic!()
+        };
+
+        subclass.methods = superclass.methods.clone();
     }
 
     fn getCurrentFrame(&mut self) -> &mut CallFrame{
